@@ -1,15 +1,16 @@
+using Unity.Netcode;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Minimal First-Person Player Controller.
+    /// Networked First-Person Player Controller (Netcode for GameObjects).
     /// Software Engineer Note:
-    /// In local proof-of-concept, controls character movement and camera pitch.
-    /// When multiplayer (Fish-Net) is connected, checks 'IsOwner' before reading input.
+    /// In NGO, every connected client has a copy of all players.
+    /// 'IsOwner' is true ONLY for the local machine controlling this character.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
-    public class SimpleNetworkPlayer : MonoBehaviour
+    public class SimpleNetworkPlayer : NetworkBehaviour
     {
         [Header("Movement")]
         [SerializeField] private float _moveSpeed = 5f;
@@ -21,7 +22,6 @@ namespace Starter
 
         [Header("Interaction")]
         [SerializeField] private float _interactionRange = 3f;
-        [SerializeField] private Transform _holdPoint;
 
         private CharacterController _characterController;
         private float _verticalLookRotation;
@@ -33,14 +33,27 @@ namespace Starter
             _characterController = GetComponent<CharacterController>();
         }
 
-        private void Start()
+        public override void OnNetworkSpawn()
         {
+            // CRITICAL: Disable camera and controls for other players so we don't control each other!
+            if (!IsOwner)
+            {
+                if (_playerCamera != null)
+                {
+                    _playerCamera.gameObject.SetActive(false);
+                }
+                enabled = false;
+                return;
+            }
+
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
 
         private void Update()
         {
+            if (!IsOwner) return;
+
             HandleLook();
             HandleMovement();
             HandleInteraction();
@@ -51,7 +64,7 @@ namespace Starter
             float mouseX = Input.GetAxisRaw("Mouse X") * _mouseSensitivity;
             float mouseY = Input.GetAxisRaw("Mouse Y") * _mouseSensitivity;
 
-            // Turn player body horizontally
+            // Turn player horizontally
             transform.Rotate(Vector3.up * mouseX);
 
             // Pitch camera vertically
@@ -82,7 +95,6 @@ namespace Starter
 
         private void HandleInteraction()
         {
-            // Press E to pick up or drop object
             if (Input.GetKeyDown(KeyCode.E))
             {
                 if (_heldObject != null)
@@ -97,8 +109,7 @@ namespace Starter
                     {
                         if (hit.collider.TryGetComponent<SimplePickupObject>(out var pickup))
                         {
-                            Transform hold = _holdPoint != null ? _holdPoint : _playerCamera.transform;
-                            pickup.Pickup(hold);
+                            pickup.Pickup(NetworkObjectId);
                             _heldObject = pickup;
                         }
                     }

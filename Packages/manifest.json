@@ -15,6 +15,7 @@
     "com.unity.multiplayer.tools": "2.2.12",
     "com.unity.netcode.gameobjects": "2.13.3",
     "com.unity.pipeline": "0.8.0-exp.1",
+    "com.firstgeargames.fishnet": "https://github.com/FirstGearGames/FishNet.git?path=Assets/FishNet",
     "com.unity.purchasing": "5.4.4",
     "com.unity.render-pipelines.universal": "17.6.0",
     "com.unity.test-framework": "1.8.0",

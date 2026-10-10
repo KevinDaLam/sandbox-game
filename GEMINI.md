@@ -57,16 +57,17 @@ You are an expert Unity 6 game engineer and multiplayer gameplay designer specia
 
 ## 3. Multiplayer & Networking Architecture
 
-* **Framework**: Unity Netcode for GameObjects (NGO) (`com.unity.netcode.gameobjects`) with Unity Transport (UTP).
-* **Topology**: Host-Client model (one player hosts the session; peers connect via Unity Relay / Lobby or LAN/IP).
+* **Framework**: Fish-Net (`FishNet.Runtime`) with Tugboat (local prototyping) and FishySteamworks (Steam P2P / Steam Datagram Relay for production).
+* **Topology**: Host-Client model (one player hosts; peers join via Steam lobby/friends list or direct IP).
 * **Network Authority**:
-  * **Player Movement & Camera**: Client-authoritative prediction for crisp, zero-latency local controls.
-  * **World State & Game Rules**: Server-authoritative (health, inventory sync, doors, objective progress, enemy AI).
-  * **Physics Sync**: Use `NetworkTransform` or lightweight synced physics states for active ragdoll bodies and thrown props.
-* **RPC vs NetworkVariables**:
-  * Use `NetworkVariable<T>` for persistent state (e.g., `IsRagdolled`, `CurrentHealth`, `CarriedItemNetId`, `Score`).
-  * Use `[ServerRpc]` for player input actions (e.g., `RequestInteractServerRpc`, `DropItemServerRpc`).
-  * Use `[ClientRpc]` for one-shot audio/visual events (e.g., `PlaySlapSoundClientRpc`, `SpawnExplosionEffectClientRpc`).
+  * **Player Movement & Physics**: Fish-Net built-in client prediction and server reconciliation for crisp local controls.
+  * **World State & Rules**: Server-authoritative (health, inventory sync, interactions, objective progress).
+  * **Physics Sync**: Use `NetworkTransform` or `NetworkRigidbody` on active ragdoll bodies and thrown props.
+* **RPC vs Synced State**:
+  * Use `[SyncVar]` for persistent state (e.g. `[SyncVar] public bool IsRagdolled;`, `[SyncVar] public int CurrentHealth;`).
+  * Use `[ServerRpc(RequireOwnership = false)]` for client-to-server action requests (e.g. `RequestInteractServerRpc`, `DropItemServerRpc`).
+  * Use `[ObserversRpc]` for server-to-all-clients broadcasts (e.g. visual effects, sounds).
+  * Use `[TargetRpc]` for server-to-specific-client messages.
 
 ---
 

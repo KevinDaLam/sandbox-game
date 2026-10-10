@@ -1,80 +1,86 @@
-using Unity.Netcode;
+using FishNet.Object;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Minimal Networked Physics Prop.
+    /// Minimal Networked Physics Prop (Fish-Net).
     /// Software Engineer Note:
-    /// In server-authoritative networking, clients request physics ownership/actions
-    /// via [ServerRpc], and the server synchronizes the result via NetworkVariables or NetworkTransform.
+    /// In Fish-Net, clients request actions via [ServerRpc],
+    /// and the server synchronizes results across all observers via [ObserversRpc].
     /// </summary>
     [RequireComponent(typeof(Rigidbody), typeof(NetworkObject))]
     public class SimplePickupObject : NetworkBehaviour
     {
         private Rigidbody _rigidbody;
-        private Transform _carrierHoldPoint;
 
         private void Awake()
         {
             _rigidbody = GetComponent<Rigidbody>();
         }
 
-        /// <summary>
-        /// Called when a player presses 'E' while looking at this object.
-        /// </summary>
-        public void RequestPickup(Transform holdPoint)
+        public void RequestPickup(NetworkObject carrier)
         {
-            if (IsServer)
+            if (base.IsServerInitialized)
             {
-                PickupOnServer(holdPoint);
+                PickupOnServer(carrier);
             }
             else
             {
-                RequestPickupServerRpc(NetworkManager.Singleton.LocalClientId);
+                ServerRequestPickup(carrier);
             }
         }
 
-        [Rpc(SendTo.Server)]
-        private void RequestPickupServerRpc(ulong requestingClientId)
+        [ServerRpc(RequireOwnership = false)]
+        private void ServerRequestPickup(NetworkObject carrier)
         {
-            if (NetworkManager.Singleton.ConnectedClients.TryGetValue(requestingClientId, out var client))
-            {
-                // Find hold point on client player
-                Transform hold = client.PlayerObject.transform;
-                PickupOnServer(hold);
-            }
+            PickupOnServer(carrier);
         }
 
-        private void PickupOnServer(Transform holdPoint)
+        private void PickupOnServer(NetworkObject carrier)
         {
-            _carrierHoldPoint = holdPoint;
-            _rigidbody.isKinematic = true; // Disable physics simulation while carried
-            transform.SetParent(holdPoint);
-            transform.localPosition = new Vector3(0, 0.5f, 1.5f); // Hold in front
+            _rigidbody.isKinematic = true;
+            transform.SetParent(carrier.transform);
+            transform.localPosition = new Vector3(0, 0.5f, 1.5f);
+            ObserversUpdateHold(carrier);
+        }
+
+        [ObserversRpc]
+        private void ObserversUpdateHold(NetworkObject carrier)
+        {
+            _rigidbody.isKinematic = true;
+            transform.SetParent(carrier.transform);
+            transform.localPosition = new Vector3(0, 0.5f, 1.5f);
         }
 
         public void Drop()
         {
-            if (IsServer)
+            if (base.IsServerInitialized)
             {
                 DropOnServer();
             }
             else
             {
-                DropServerRpc();
+                ServerDrop();
             }
         }
 
-        [Rpc(SendTo.Server)]
-        private void DropServerRpc()
+        [ServerRpc(RequireOwnership = false)]
+        private void ServerDrop()
         {
             DropOnServer();
         }
 
         private void DropOnServer()
         {
-            _carrierHoldPoint = null;
+            transform.SetParent(null);
+            _rigidbody.isKinematic = false;
+            ObserversReleaseHold();
+        }
+
+        [ObserversRpc]
+        private void ObserversReleaseHold()
+        {
             transform.SetParent(null);
             _rigidbody.isKinematic = false;
         }

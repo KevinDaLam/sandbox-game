@@ -1,8 +1,9 @@
-﻿{
+{
     "name": "Game",
     "rootNamespace": "Game",
     "references": [
         "Unity.Netcode.Runtime",
+        "FishNet.Runtime",
         "Unity.InputSystem",
         "Unity.TextMeshPro",
         "Unity.RenderPipelines.Universal.Runtime",

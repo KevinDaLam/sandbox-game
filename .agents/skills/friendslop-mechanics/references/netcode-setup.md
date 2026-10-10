@@ -1,72 +1,92 @@
-# Netcode for GameObjects (NGO) Multiplayer Foundation
+# Fish-Net + FishySteamworks Multiplayer Foundation
 
-Architecture and synchronization guide for 1-4+ player co-op sessions using Unity Netcode for GameObjects (NGO) and Unity Transport (UTP).
+Architecture and synchronization guide for 1-4+ player co-op friendslop sessions using **Fish-Net** (`FishNet.Runtime`) and **FishySteamworks** (Steam P2P SDR).
 
 ---
 
-## 1. Network Topology: Host-Client Model
+## 1. Network Topology: Host-Client via Steam P2P
 
 * **Host**: One player acts as both server and local player.
-* **Clients**: Friends connect to the host via Unity Relay (join code) or Direct IP.
-* **Advantage**: Zero dedicated server hosting costs, fast setup, ideal for Discord friend groups.
+* **Clients**: Friends connect via Steam lobby invite, friends list join, or direct SteamID.
+* **Transports**:
+  * **Tugboat (Default)**: Used for local prototyping (`127.0.0.1`) without requiring Steam.
+  * **FishySteamworks**: Used for production Steam release (NAT punchthrough, encrypted relays, 0 port forwarding).
 
 ---
 
-## 2. Core Netcode Components
+## 2. Core Fish-Net Components
 
 Component | Purpose
 :--- | :---
-`NetworkManager` | Central networking orchestrator managing transports, player prefabs, and connected clients.
-`UnityTransport` | Low-level UDP socket transport; handles direct connections and Unity Relay protocol.
-`NetworkObject` | Placed on prefabs that exist across the network (Players, Thrown Items, Interactive Doors).
-`NetworkTransform` | Interpolates and synchronizes position/rotation of players and moving network entities.
-`NetworkVariable<T>` | Reactive synchronized state automatically sent from server to clients.
+`NetworkManager` | Central networking orchestrator managing transports, server, and client connections.
+`Tugboat` / `FishySteamworks` | The socket transport layer (Local UDP vs Steam SDR).
+`PlayerSpawner` | Automatically spawns the player prefab when a client connects.
+`NetworkObject` | Placed on prefabs that exist across the network (Players, Props, Doors).
+`NetworkTransform` | Interpolates and synchronizes position/rotation with built-in client prediction.
+`NetworkRigidbody` | Synchronizes active physics bodies (thrown items, ragdolls).
 
 ---
 
-## 3. Essential Friendslop Network Patterns
+## 3. Essential Fish-Net Friendslop Patterns
 
-### Synchronized Player State
+### Synchronized Player State (`[SyncVar]`)
 ```csharp
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
+
 public class NetworkPlayerState : NetworkBehaviour
 {
-    // Synchronize health, downed state, and carried item ID
-    public NetworkVariable<int> Health = new(100, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-    public NetworkVariable<bool> IsDowned = new(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-    public NetworkVariable<ulong> CarriedItemNetId = new(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    // [SyncVar] automatically replicates state from server to clients
+    [SyncVar(OnChange = nameof(OnHealthChanged))]
+    public int Health = 100;
 
-    public override void OnNetworkSpawn()
-    {
-        Health.OnValueChanged += HandleHealthChanged;
-        IsDowned.OnValueChanged += HandleDownedChanged;
-    }
+    [SyncVar(OnChange = nameof(OnDownedChanged))]
+    public bool IsDowned = false;
+
+    private void OnHealthChanged(int prev, int next, bool asServer) { /* Update UI */ }
+    private void OnDownedChanged(bool prev, bool next, bool asServer) { /* Trigger ragdoll */ }
 }
 ```
 
-### Server-Authoritative Interaction RPCs
+### Server-Authoritative Interaction RPCs (`[ServerRpc]`)
 ```csharp
-[ServerRpc]
-public void RequestGrabItemServerRpc(ulong itemNetworkObjectId, ServerRpcParams rpcParams = default)
+using FishNet.Object;
+
+public class PlayerInteraction : NetworkBehaviour
 {
-    if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(itemNetworkObjectId, out var netObj))
+    // Client calls this, executes on Server/Host
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestGrabItemServerRpc(NetworkObject targetItem)
     {
+        if (targetItem == null) return;
+
         // Server validates distance
-        if (Vector3.Distance(transform.position, netObj.transform.position) < 3.5f)
+        if (Vector3.Distance(transform.position, targetItem.transform.position) < 3.5f)
         {
-            // Transfer ownership or attach on server
-            AttachItem(netObj);
+            targetItem.transform.SetParent(transform);
+            ObserversAttachItem(targetItem);
         }
     }
+
+    [ObserversRpc]
+    private void ObserversAttachItem(NetworkObject targetItem)
+    {
+        targetItem.transform.SetParent(transform);
+    }
 }
 ```
 
-### Comedic ClientRPCs (Audio & Slap Effects)
+### Comedic Visual & Sound Broadcasts (`[ObserversRpc]`)
 ```csharp
-[ClientRpc]
-public void PlaySlapEffectClientRpc(Vector3 impactPoint, Vector3 slapDirection)
+using FishNet.Object;
+
+public class SlapMechanic : NetworkBehaviour
 {
-    // Spawn funny comic slap particle & squeak sound on all client screens
-    VFXManager.Instance.SpawnSlapSparks(impactPoint);
-    SoundManager.Instance.PlaySqueakSound(impactPoint);
+    [ObserversRpc]
+    public void PlaySlapEffectObserversRpc(Vector3 impactPoint)
+    {
+        VFXManager.Instance.SpawnSlapSparks(impactPoint);
+        SoundManager.Instance.PlaySqueakSound(impactPoint);
+    }
 }
 ```

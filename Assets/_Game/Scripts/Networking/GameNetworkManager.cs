@@ -1,4 +1,4 @@
-using Unity.Netcode;
+using FishNet;
 using UnityEngine;
 
 namespace Game.Networking
@@ -24,42 +24,49 @@ namespace Game.Networking
         private void Start()
         {
 #if UNITY_EDITOR
-            if (_autoStartHostInEditor && NetworkManager.Singleton != null && !NetworkManager.Singleton.IsListening)
+            if (_autoStartHostInEditor && InstanceFinder.NetworkManager != null)
             {
-                StartHost();
+                if (!InstanceFinder.ServerManager.Started && !InstanceFinder.ClientManager.Started)
+                {
+                    StartHost();
+                }
             }
 #endif
         }
 
         public void StartHost()
         {
-            if (NetworkManager.Singleton == null)
+            if (InstanceFinder.NetworkManager == null)
             {
-                Debug.LogError("[GameNetworkManager] NetworkManager singleton is missing!");
+                Debug.LogError("[GameNetworkManager] FishNet NetworkManager is missing!");
                 return;
             }
 
-            Debug.Log("[GameNetworkManager] Starting Host session...");
-            NetworkManager.Singleton.StartHost();
+            Debug.Log("[GameNetworkManager] Starting Host session (Server + Client)...");
+            InstanceFinder.ServerManager.StartConnection();
+            InstanceFinder.ClientManager.StartConnection();
         }
 
         public void StartClient()
         {
-            if (NetworkManager.Singleton == null)
+            if (InstanceFinder.NetworkManager == null)
             {
-                Debug.LogError("[GameNetworkManager] NetworkManager singleton is missing!");
+                Debug.LogError("[GameNetworkManager] FishNet NetworkManager is missing!");
                 return;
             }
 
             Debug.Log("[GameNetworkManager] Connecting as Client...");
-            NetworkManager.Singleton.StartClient();
+            InstanceFinder.ClientManager.StartConnection();
         }
 
         public void Disconnect()
         {
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            if (InstanceFinder.NetworkManager != null)
             {
-                NetworkManager.Singleton.Shutdown();
+                if (InstanceFinder.ServerManager.Started)
+                    InstanceFinder.ServerManager.StopConnection(true);
+                if (InstanceFinder.ClientManager.Started)
+                    InstanceFinder.ClientManager.StopConnection();
             }
         }
     }

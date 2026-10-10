@@ -1,13 +1,13 @@
-using Unity.Netcode;
+using FishNet.Object;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Minimal First-Person Networked Player Controller.
+    /// Minimal First-Person Networked Player Controller (Fish-Net).
     /// Software Engineer Note:
-    /// In NGO, every spawned player exists on every machine.
-    /// 'IsOwner' is true ONLY for the local machine that controls this character.
+    /// In Fish-Net, every spawned player exists on every machine.
+    /// 'base.IsOwner' is true ONLY for the local machine that controls this character.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class SimpleNetworkPlayer : NetworkBehaviour
@@ -29,12 +29,14 @@ namespace Starter
             _characterController = GetComponent<CharacterController>();
         }
 
-        public override void OnNetworkSpawn()
+        public override void OnStartClient()
         {
+            base.OnStartClient();
+
             // CRITICAL NETWORKING RULE:
             // If this player instance is NOT owned by this local computer,
             // disable its camera and movement script so we don't control each other!
-            if (!IsOwner)
+            if (!base.IsOwner)
             {
                 if (_playerCamera != null)
                 {
@@ -51,7 +53,7 @@ namespace Starter
 
         private void Update()
         {
-            if (!IsOwner) return;
+            if (!base.IsOwner) return;
 
             HandleLook();
             HandleMovement();

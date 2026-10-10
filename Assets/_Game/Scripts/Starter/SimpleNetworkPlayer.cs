@@ -1,16 +1,15 @@
-using FishNet.Object;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Minimal First-Person Networked Player Controller (Fish-Net).
+    /// Minimal First-Person Player Controller.
     /// Software Engineer Note:
-    /// In Fish-Net, every spawned player exists on every machine.
-    /// 'base.IsOwner' is true ONLY for the local machine that controls this character.
+    /// In local proof-of-concept, controls character movement and camera pitch.
+    /// When multiplayer (Fish-Net) is connected, checks 'IsOwner' before reading input.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
-    public class SimpleNetworkPlayer : NetworkBehaviour
+    public class SimpleNetworkPlayer : MonoBehaviour
     {
         [Header("Movement")]
         [SerializeField] private float _moveSpeed = 5f;
@@ -20,43 +19,31 @@ namespace Starter
         [Header("Camera")]
         [SerializeField] private Camera _playerCamera;
 
+        [Header("Interaction")]
+        [SerializeField] private float _interactionRange = 3f;
+        [SerializeField] private Transform _holdPoint;
+
         private CharacterController _characterController;
         private float _verticalLookRotation;
         private float _verticalVelocity;
+        private SimplePickupObject _heldObject;
 
         private void Awake()
         {
             _characterController = GetComponent<CharacterController>();
         }
 
-        public override void OnStartClient()
+        private void Start()
         {
-            base.OnStartClient();
-
-            // CRITICAL NETWORKING RULE:
-            // If this player instance is NOT owned by this local computer,
-            // disable its camera and movement script so we don't control each other!
-            if (!base.IsOwner)
-            {
-                if (_playerCamera != null)
-                {
-                    _playerCamera.gameObject.SetActive(false);
-                }
-                enabled = false;
-                return;
-            }
-
-            // Lock cursor for local first-person control
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
 
         private void Update()
         {
-            if (!base.IsOwner) return;
-
             HandleLook();
             HandleMovement();
+            HandleInteraction();
         }
 
         private void HandleLook()
@@ -91,6 +78,32 @@ namespace Starter
 
             _verticalVelocity += _gravity * Time.deltaTime;
             _characterController.Move(Vector3.up * (_verticalVelocity * Time.deltaTime));
+        }
+
+        private void HandleInteraction()
+        {
+            // Press E to pick up or drop object
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                if (_heldObject != null)
+                {
+                    _heldObject.Drop();
+                    _heldObject = null;
+                }
+                else if (_playerCamera != null)
+                {
+                    Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
+                    if (Physics.Raycast(ray, out RaycastHit hit, _interactionRange))
+                    {
+                        if (hit.collider.TryGetComponent<SimplePickupObject>(out var pickup))
+                        {
+                            Transform hold = _holdPoint != null ? _holdPoint : _playerCamera.transform;
+                            pickup.Pickup(hold);
+                            _heldObject = pickup;
+                        }
+                    }
+                }
+            }
         }
     }
 }

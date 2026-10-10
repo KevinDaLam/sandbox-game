@@ -1,88 +1,49 @@
-using FishNet.Object;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Minimal Networked Physics Prop (Fish-Net).
-    /// Software Engineer Note:
-    /// In Fish-Net, clients request actions via [ServerRpc],
-    /// and the server synchronizes results across all observers via [ObserversRpc].
+    /// Minimal Physics Prop for Proof-of-Concept.
+    /// Can be picked up, carried in front of the player, and dropped with physics momentum.
     /// </summary>
-    [RequireComponent(typeof(Rigidbody), typeof(NetworkObject))]
-    public class SimplePickupObject : NetworkBehaviour
+    [RequireComponent(typeof(Rigidbody))]
+    public class SimplePickupObject : MonoBehaviour
     {
         private Rigidbody _rigidbody;
+        private Transform _currentHoldPoint;
+        private bool _isHeld;
 
         private void Awake()
         {
             _rigidbody = GetComponent<Rigidbody>();
         }
 
-        public void RequestPickup(NetworkObject carrier)
+        public void Pickup(Transform holdPoint)
         {
-            if (base.IsServerInitialized)
-            {
-                PickupOnServer(carrier);
-            }
-            else
-            {
-                ServerRequestPickup(carrier);
-            }
-        }
-
-        [ServerRpc(RequireOwnership = false)]
-        private void ServerRequestPickup(NetworkObject carrier)
-        {
-            PickupOnServer(carrier);
-        }
-
-        private void PickupOnServer(NetworkObject carrier)
-        {
-            _rigidbody.isKinematic = true;
-            transform.SetParent(carrier.transform);
-            transform.localPosition = new Vector3(0, 0.5f, 1.5f);
-            ObserversUpdateHold(carrier);
-        }
-
-        [ObserversRpc]
-        private void ObserversUpdateHold(NetworkObject carrier)
-        {
-            _rigidbody.isKinematic = true;
-            transform.SetParent(carrier.transform);
-            transform.localPosition = new Vector3(0, 0.5f, 1.5f);
+            _currentHoldPoint = holdPoint;
+            _isHeld = true;
+            _rigidbody.useGravity = false;
+            _rigidbody.linearDamping = 10f;
         }
 
         public void Drop()
         {
-            if (base.IsServerInitialized)
+            _isHeld = false;
+            _currentHoldPoint = null;
+            _rigidbody.useGravity = true;
+            _rigidbody.linearDamping = 0.05f;
+            _rigidbody.linearVelocity = Vector3.forward * 2f;
+        }
+
+        private void FixedUpdate()
+        {
+            if (_isHeld && _currentHoldPoint != null)
             {
-                DropOnServer();
+                // Smooth physics pull to target point without clipping through walls
+                Vector3 targetPos = _currentHoldPoint.position + _currentHoldPoint.forward * 1.5f;
+                Vector3 delta = targetPos - transform.position;
+                _rigidbody.linearVelocity = delta * 12f;
             }
-            else
-            {
-                ServerDrop();
-            }
-        }
-
-        [ServerRpc(RequireOwnership = false)]
-        private void ServerDrop()
-        {
-            DropOnServer();
-        }
-
-        private void DropOnServer()
-        {
-            transform.SetParent(null);
-            _rigidbody.isKinematic = false;
-            ObserversReleaseHold();
-        }
-
-        [ObserversRpc]
-        private void ObserversReleaseHold()
-        {
-            transform.SetParent(null);
-            _rigidbody.isKinematic = false;
         }
     }
 }

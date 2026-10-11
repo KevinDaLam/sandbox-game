@@ -95,8 +95,7 @@ namespace Starter
             // If cursor is unlocked and player clicks the game screen, lock it back
             if (!_isCursorLocked && Input.GetMouseButtonDown(0))
             {
-                // Only lock back if not clicking on the top-left HUD area
-                if (Input.mousePosition.x > 380 || Input.mousePosition.y < (Screen.height - 480))
+                if (UnityEngine.EventSystems.EventSystem.current == null || !UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
                 {
                     SetCursorLock(true);
                 }

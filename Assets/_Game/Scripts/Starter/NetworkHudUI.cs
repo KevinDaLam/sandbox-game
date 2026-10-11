@@ -10,15 +10,23 @@ using Mirror.FizzySteam;
 using kcp2k;
 using Steamworks;
 using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.EventSystems;
 
 namespace Starter
 {
     /// <summary>
     /// Dual Steam P2P (FizzySteamworks + Steamworks.NET) and LAN (KcpTransport) Network HUD.
-    /// Matches the exact networking stack of 'Gamble With Your Friends'.
+    /// Uses modern Unity UI (Canvas) with Canvas Scaler (Scale With Screen Size)
+    /// to ensure crisp, identical UI scaling across 1080p, 1440p, 4K, and Mac Retina displays.
     /// </summary>
     public class NetworkHudUI : MonoBehaviour
     {
+        [Header("UI System")]
+        [Tooltip("If checked, falls back to legacy IMGUI (OnGUI). Default false uses Unity UI Canvas.")]
+        [SerializeField] private bool _useLegacyOnGUI = false;
+
+        [Header("Network Inputs")]
         [SerializeField] private string _steamIdInput = "";
         [SerializeField] private string _joinCodeInput = "";
         [SerializeField] private string _ipAddress = "127.0.0.1";
@@ -48,6 +56,20 @@ namespace Starter
         private KcpTransport _kcpTransport;
         private Camera _menuCamera;
 
+        // Canvas UI References
+        private GameObject _canvasGo;
+        private GameObject _lobbyPanel;
+        private GameObject _inGamePanel;
+        private Transform _discoveryButtonsContainer;
+        private Text _steamStatusText;
+        private InputField _steamIdInputField;
+        private InputField _lanIpInputField;
+        private Text _statusLogText;
+        private Text _inGameRoleText;
+        private Text _inGameDetailsText;
+        private Text _inGamePlayersText;
+        private readonly Dictionary<string, GameObject> _spawnedDiscoveryButtons = new Dictionary<string, GameObject>();
+
         private void Awake()
         {
             EnsureTransports();
@@ -70,6 +92,11 @@ namespace Starter
         private void Start()
         {
             EnsureMenuCamera();
+            EnsureEventSystem();
+            if (!_useLegacyOnGUI)
+            {
+                CreateCanvasUI();
+            }
             InitializeSteam();
             StartListeningForHosts();
         }
@@ -88,6 +115,17 @@ namespace Starter
             else
             {
                 _menuCamera = Camera.main;
+            }
+        }
+
+        private void EnsureEventSystem()
+        {
+            if (EventSystem.current == null)
+            {
+                var esGo = new GameObject("EventSystem");
+                esGo.transform.SetParent(transform, false);
+                esGo.AddComponent<EventSystem>();
+                esGo.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
             }
         }
 
@@ -194,6 +232,11 @@ namespace Starter
                     BroadcastHostBeacon();
                 }
             }
+
+            if (!_useLegacyOnGUI)
+            {
+                UpdateCanvasUI();
+            }
         }
 
         private void OnDestroy()
@@ -210,8 +253,430 @@ namespace Starter
             catch { }
         }
 
+        // ==========================================
+        // MODERN UNITY UI (CANVAS SCALER) SYSTEM
+        // ==========================================
+
+        private static Font GetDefaultFont()
+        {
+            var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (font == null) font = Resources.GetBuiltinResource<Font>("Arial.fontdata");
+            return font;
+        }
+
+        private void CreateCanvasUI()
+        {
+            if (_canvasGo != null) return;
+
+            Font font = GetDefaultFont();
+
+            // 1. Root Canvas with CanvasScaler set to ScaleWithScreenSize (1920x1080)
+            _canvasGo = new GameObject("NetworkHUD_Canvas");
+            _canvasGo.transform.SetParent(transform, false);
+
+            var canvas = _canvasGo.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 999;
+
+            var scaler = _canvasGo.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+
+            _canvasGo.AddComponent<GraphicRaycaster>();
+
+            // 2. Lobby Menu Panel (Left Sidebar card)
+            _lobbyPanel = CreatePanel(_canvasGo.transform, "LobbyPanel",
+                new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1),
+                new Vector2(40, -40), new Vector2(460, 720),
+                new Color(0.08f, 0.10f, 0.14f, 0.94f));
+
+            var lobbyVlg = _lobbyPanel.AddComponent<VerticalLayoutGroup>();
+            lobbyVlg.padding = new RectOffset(20, 20, 20, 20);
+            lobbyVlg.spacing = 10;
+            lobbyVlg.childControlWidth = true;
+            lobbyVlg.childControlHeight = false;
+            lobbyVlg.childForceExpandWidth = true;
+            lobbyVlg.childForceExpandHeight = false;
+
+            // Title
+            CreateText(_lobbyPanel.transform, "SANDBOX MULTIPLAYER", 22, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white, 30);
+            CreateText(_lobbyPanel.transform, "Friendslop Co-op Prototype", 13, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.6f, 0.7f, 0.8f), 18);
+
+            CreateDivider(_lobbyPanel.transform, 10);
+
+            // --- Steam P2P Section ---
+            CreateText(_lobbyPanel.transform, "STEAM P2P (SPACEWAR 480)", 13, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.35f, 0.75f, 1f), 20);
+            _steamStatusText = CreateText(_lobbyPanel.transform, "Checking Steam status...", 12, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.85f, 0.85f, 0.85f), 22);
+
+            CreateButton(_lobbyPanel.transform, "🎮 Host Steam Lobby", 15, new Color(0.12f, 0.53f, 0.90f), new Color(0.20f, 0.65f, 1.0f), StartSteamHost, 40);
+
+            // Steam Join Row
+            var steamJoinRow = CreateHorizontalRow(_lobbyPanel.transform, 38, 8);
+            _steamIdInputField = CreateInputField(steamJoinRow.transform, "Enter Friend's Steam ID64...", _steamIdInput, 13, (val) => _steamIdInput = val);
+            var steamJoinBtn = CreateButton(steamJoinRow.transform, "🚀 Join", 14, new Color(0.18f, 0.65f, 0.28f), new Color(0.24f, 0.78f, 0.35f), () =>
+            {
+                if (ulong.TryParse(_steamIdInput.Trim(), out ulong targetId) && targetId > 0)
+                {
+                    StartSteamClient(targetId);
+                }
+                else
+                {
+                    _statusMessage = "Please enter a valid 17-digit Steam ID64!";
+                }
+            }, 38);
+            steamJoinBtn.GetComponent<LayoutElement>().preferredWidth = 110;
+
+            CreateDivider(_lobbyPanel.transform, 12);
+
+            // --- LAN / Direct IP Section ---
+            CreateText(_lobbyPanel.transform, "LOCAL LAN / DIRECT IP", 13, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(1.0f, 0.75f, 0.35f), 20);
+            CreateButton(_lobbyPanel.transform, "🏠 Host LAN Game", 15, new Color(0.90f, 0.45f, 0.10f), new Color(1.0f, 0.55f, 0.15f), StartLanHost, 40);
+
+            // LAN Join Row
+            var lanJoinRow = CreateHorizontalRow(_lobbyPanel.transform, 38, 8);
+            _lanIpInputField = CreateInputField(lanJoinRow.transform, "127.0.0.1 or Room Code...", string.IsNullOrEmpty(_joinCodeInput) ? "127.0.0.1" : _joinCodeInput, 13, (val) => _joinCodeInput = val);
+            var lanJoinBtn = CreateButton(lanJoinRow.transform, "🔗 Join", 14, new Color(0.0f, 0.55f, 0.50f), new Color(0.0f, 0.68f, 0.62f), () =>
+            {
+                string input = string.IsNullOrEmpty(_joinCodeInput) ? "127.0.0.1" : _joinCodeInput.Trim();
+                if (IPAddress.TryParse(input, out _)) ConnectToIp(input);
+                else if (TryRoomCodeToIp(input, out string decodedIp)) ConnectToIp(decodedIp);
+                else _statusMessage = $"Invalid input '{input}'! Enter valid IPv4 or Room Code.";
+            }, 38);
+            lanJoinBtn.GetComponent<LayoutElement>().preferredWidth = 110;
+
+            CreateDivider(_lobbyPanel.transform, 10);
+
+            // --- LAN Auto-Discovery Section ---
+            CreateText(_lobbyPanel.transform, "📡 Discovered LAN Games:", 12, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.55f, 0.85f, 1f), 18);
+            var discoveryContainer = new GameObject("DiscoveryList", typeof(RectTransform));
+            discoveryContainer.transform.SetParent(_lobbyPanel.transform, false);
+            var dLayout = discoveryContainer.AddComponent<VerticalLayoutGroup>();
+            dLayout.spacing = 4;
+            dLayout.childControlWidth = true;
+            dLayout.childControlHeight = false;
+            dLayout.childForceExpandWidth = true;
+            discoveryContainer.AddComponent<LayoutElement>().preferredHeight = 65;
+            _discoveryButtonsContainer = discoveryContainer.transform;
+
+            // Status Log Area
+            var logPanel = CreatePanel(_lobbyPanel.transform, "StatusLogBox",
+                new Vector2(0, 0), new Vector2(1, 0), new Vector2(0.5f, 0),
+                Vector2.zero, new Vector2(0, 60), new Color(0.04f, 0.05f, 0.07f, 1f));
+            logPanel.AddComponent<LayoutElement>().preferredHeight = 65;
+            _statusLogText = CreateText(logPanel.transform, _statusMessage, 12, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.8f, 0.85f, 0.9f), 60);
+            var logRect = _statusLogText.GetComponent<RectTransform>();
+            logRect.anchorMin = Vector2.zero;
+            logRect.anchorMax = Vector2.one;
+            logRect.offsetMin = new Vector2(8, 6);
+            logRect.offsetMax = new Vector2(-8, -6);
+
+            // 3. In-Game HUD Panel (Shown when connected)
+            _inGamePanel = new GameObject("InGameHUD", typeof(RectTransform));
+            _inGamePanel.transform.SetParent(_canvasGo.transform, false);
+            var inGameRect = _inGamePanel.GetComponent<RectTransform>();
+            inGameRect.anchorMin = Vector2.zero;
+            inGameRect.anchorMax = Vector2.one;
+            inGameRect.offsetMin = Vector2.zero;
+            inGameRect.offsetMax = Vector2.zero;
+
+            // Top-Left In-Game Status Badge
+            var badgePanel = CreatePanel(_inGamePanel.transform, "StatusBadge",
+                new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1),
+                new Vector2(30, -30), new Vector2(360, 140),
+                new Color(0.08f, 0.10f, 0.14f, 0.88f));
+
+            var badgeVlg = badgePanel.AddComponent<VerticalLayoutGroup>();
+            badgeVlg.padding = new RectOffset(16, 16, 12, 12);
+            badgeVlg.spacing = 6;
+            badgeVlg.childControlWidth = true;
+            badgeVlg.childControlHeight = false;
+            badgeVlg.childForceExpandWidth = true;
+
+            _inGameRoleText = CreateText(badgePanel.transform, "🟢 ONLINE • HOST", 16, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.5f, 0.9f, 0.5f), 22);
+            _inGameDetailsText = CreateText(badgePanel.transform, "Room Code: ----", 13, FontStyle.Normal, TextAnchor.MiddleLeft, Color.white, 20);
+            _inGamePlayersText = CreateText(badgePanel.transform, "Connected Players: 1", 13, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.7f, 0.8f, 0.9f), 20);
+
+            CreateButton(badgePanel.transform, "Disconnect", 14, new Color(0.80f, 0.20f, 0.20f), new Color(0.92f, 0.25f, 0.25f), Disconnect, 32);
+
+            // Bottom-Center Controls Hint Bar
+            var hintPanel = CreatePanel(_inGamePanel.transform, "ControlsHintBar",
+                new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
+                new Vector2(0, 30), new Vector2(620, 38),
+                new Color(0.06f, 0.08f, 0.10f, 0.78f));
+
+            var hintText = CreateText(hintPanel.transform, "[ESC / TAB] Unlock Mouse   •   [WASD] Move   •   [E] Pick up Box", 14, FontStyle.Normal, TextAnchor.MiddleCenter, new Color(0.78f, 0.86f, 0.92f), 36);
+            var hintRect = hintText.GetComponent<RectTransform>();
+            hintRect.anchorMin = Vector2.zero;
+            hintRect.anchorMax = Vector2.one;
+            hintRect.offsetMin = Vector2.zero;
+            hintRect.offsetMax = Vector2.zero;
+
+            _inGamePanel.SetActive(false);
+        }
+
+        private void UpdateCanvasUI()
+        {
+            if (_lobbyPanel == null || _inGamePanel == null) return;
+
+            bool isNetworkActive = NetworkServer.active || NetworkClient.isConnected;
+
+            _lobbyPanel.SetActive(!isNetworkActive);
+            _inGamePanel.SetActive(isNetworkActive);
+
+            if (!isNetworkActive)
+            {
+                // Update Steam status text
+                if (_isSteamInitialized)
+                {
+                    string persona = SteamFriends.GetPersonaName();
+                    ulong steamId = SteamUser.GetSteamID().m_SteamID;
+                    _steamStatusText.text = $"👤 Steam: <b>{persona}</b> (ID: {steamId})";
+                    _steamStatusText.color = new Color(0.4f, 0.85f, 1f);
+                }
+                else
+                {
+                    _steamStatusText.text = string.IsNullOrEmpty(_steamErrorMessage)
+                        ? "⚠️ Steam not detected (LAN available)"
+                        : $"⚠️ Steam: {_steamErrorMessage}";
+                    _steamStatusText.color = new Color(1f, 0.8f, 0.4f);
+                }
+
+                if (_statusLogText != null)
+                {
+                    _statusLogText.text = _statusMessage;
+                }
+
+                // Update dynamic LAN discovery buttons
+                UpdateDiscoveryButtons();
+            }
+            else
+            {
+                bool isHost = NetworkServer.active;
+                _inGameRoleText.text = isHost ? "🟢 ONLINE • HOST" : "🔵 ONLINE • CLIENT";
+                _inGameRoleText.color = isHost ? new Color(0.45f, 0.90f, 0.45f) : new Color(0.45f, 0.75f, 1f);
+
+                if (isHost)
+                {
+                    if (!string.IsNullOrEmpty(_hostRoomCode))
+                    {
+                        _inGameDetailsText.text = $"LAN Room: <b>{_hostRoomCode}</b> (IP: {GetLocalIPv4()})";
+                    }
+                    else if (_isSteamInitialized)
+                    {
+                        _inGameDetailsText.text = $"Steam Host ID: <b>{SteamUser.GetSteamID().m_SteamID}</b>";
+                    }
+                    else
+                    {
+                        _inGameDetailsText.text = "Host active";
+                    }
+                }
+                else
+                {
+                    _inGameDetailsText.text = "Connected to Host";
+                }
+
+                int playerCount = NetworkServer.active ? NetworkServer.connections.Count : (NetworkClient.isConnected ? 1 : 0);
+                _inGamePlayersText.text = $"Connected Players: <b>{playerCount}</b>";
+            }
+        }
+
+        private void UpdateDiscoveryButtons()
+        {
+            if (_discoveryButtonsContainer == null) return;
+
+            lock (_discoveredRooms)
+            {
+                foreach (var kvp in _discoveredRooms)
+                {
+                    string code = kvp.Key;
+                    string ip = kvp.Value;
+
+                    if (!_spawnedDiscoveryButtons.ContainsKey(code))
+                    {
+                        var btn = CreateButton(_discoveryButtonsContainer, $"👉 Join [{code}] ({ip})", 13,
+                            new Color(0.18f, 0.38f, 0.58f), new Color(0.24f, 0.48f, 0.72f), () => ConnectToIp(ip), 28);
+                        _spawnedDiscoveryButtons[code] = btn;
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // UI BUILDING HELPERS
+        // ==========================================
+
+        private static GameObject CreatePanel(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 anchoredPosition, Vector2 size, Color bgColor)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.pivot = pivot;
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = size;
+
+            var img = go.GetComponent<Image>();
+            img.color = bgColor;
+            return go;
+        }
+
+        private static GameObject CreateHorizontalRow(Transform parent, float height, float spacing)
+        {
+            var go = new GameObject("Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+            var hlg = go.GetComponent<HorizontalLayoutGroup>();
+            hlg.spacing = spacing;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = true;
+
+            var le = go.GetComponent<LayoutElement>();
+            le.preferredHeight = height;
+            le.flexibleWidth = 1f;
+            return go;
+        }
+
+        private static Text CreateText(Transform parent, string content, int fontSize, FontStyle style, TextAnchor alignment, Color color, float preferredHeight)
+        {
+            var go = new GameObject("Text", typeof(RectTransform), typeof(Text), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+
+            var text = go.GetComponent<Text>();
+            text.font = GetDefaultFont();
+            text.text = content;
+            text.fontSize = fontSize;
+            text.fontStyle = style;
+            text.alignment = alignment;
+            text.color = color;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+
+            var le = go.GetComponent<LayoutElement>();
+            le.preferredHeight = preferredHeight;
+            le.flexibleWidth = 1f;
+            return text;
+        }
+
+        private static GameObject CreateButton(Transform parent, string label, int fontSize, Color normalColor, Color hoverColor, UnityEngine.Events.UnityAction onClick, float height)
+        {
+            var go = new GameObject("Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+
+            var img = go.GetComponent<Image>();
+            img.color = normalColor;
+
+            var btn = go.GetComponent<Button>();
+            var colors = btn.colors;
+            colors.normalColor = normalColor;
+            colors.highlightedColor = hoverColor;
+            colors.pressedColor = normalColor * 0.8f;
+            btn.colors = colors;
+            if (onClick != null) btn.onClick.AddListener(onClick);
+
+            var le = go.GetComponent<LayoutElement>();
+            le.preferredHeight = height;
+            le.flexibleWidth = 1f;
+
+            // Label
+            var textGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            textGo.transform.SetParent(go.transform, false);
+            var rect = textGo.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+
+            var txt = textGo.GetComponent<Text>();
+            txt.font = GetDefaultFont();
+            txt.text = label;
+            txt.fontSize = fontSize;
+            txt.fontStyle = FontStyle.Bold;
+            txt.alignment = TextAnchor.MiddleCenter;
+            txt.color = Color.white;
+
+            return go;
+        }
+
+        private static InputField CreateInputField(Transform parent, string placeholder, string initialText, int fontSize, Action<string> onValueChanged)
+        {
+            var go = new GameObject("InputField", typeof(RectTransform), typeof(Image), typeof(InputField), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+
+            var img = go.GetComponent<Image>();
+            img.color = new Color(0.12f, 0.15f, 0.20f, 1f);
+
+            var inputField = go.GetComponent<InputField>();
+
+            // Text
+            var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+            textGo.transform.SetParent(go.transform, false);
+            var textRect = textGo.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = new Vector2(10, 0);
+            textRect.offsetMax = new Vector2(-10, 0);
+
+            var txt = textGo.GetComponent<Text>();
+            txt.font = GetDefaultFont();
+            txt.fontSize = fontSize;
+            txt.alignment = TextAnchor.MiddleLeft;
+            txt.color = Color.white;
+            txt.supportRichText = false;
+
+            // Placeholder
+            var placeGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
+            placeGo.transform.SetParent(go.transform, false);
+            var placeRect = placeGo.GetComponent<RectTransform>();
+            placeRect.anchorMin = Vector2.zero;
+            placeRect.anchorMax = Vector2.one;
+            placeRect.offsetMin = new Vector2(10, 0);
+            placeRect.offsetMax = new Vector2(-10, 0);
+
+            var placeTxt = placeGo.GetComponent<Text>();
+            placeTxt.font = GetDefaultFont();
+            placeTxt.text = placeholder;
+            placeTxt.fontSize = fontSize;
+            placeTxt.fontStyle = FontStyle.Italic;
+            placeTxt.alignment = TextAnchor.MiddleLeft;
+            placeTxt.color = new Color(0.45f, 0.55f, 0.65f);
+
+            inputField.textComponent = txt;
+            inputField.placeholder = placeTxt;
+            inputField.text = initialText ?? "";
+
+            if (onValueChanged != null) inputField.onValueChanged.AddListener((v) => onValueChanged(v));
+
+            var le = go.GetComponent<LayoutElement>();
+            le.flexibleWidth = 1f;
+
+            return inputField;
+        }
+
+        private static void CreateDivider(Transform parent, float spacing)
+        {
+            var go = new GameObject("Divider", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+
+            var img = go.GetComponent<Image>();
+            img.color = new Color(0.20f, 0.24f, 0.32f, 0.8f);
+
+            var le = go.GetComponent<LayoutElement>();
+            le.preferredHeight = 2;
+            le.flexibleWidth = 1f;
+        }
+
+        // ==========================================
+        // LEGACY ONGUI FALLBACK
+        // ==========================================
+
         private void OnGUI()
         {
+            if (!_useLegacyOnGUI) return;
+
             GUI.Box(new Rect(10, 10, 360, 580), GUIContent.none);
             GUILayout.BeginArea(new Rect(16, 16, 348, 568));
 
@@ -284,26 +749,13 @@ namespace Starter
                 if (GUILayout.Button(_isConnecting ? "Connecting..." : "Join Game (LAN)", GUILayout.Height(34)))
                 {
                     string input = _joinCodeInput;
-                    if (string.IsNullOrEmpty(input))
-                    {
-                        ConnectToIp("127.0.0.1");
-                    }
-                    else if (IPAddress.TryParse(input, out _))
-                    {
-                        ConnectToIp(input);
-                    }
-                    else if (TryRoomCodeToIp(input, out string decodedIp))
-                    {
-                        ConnectToIp(decodedIp);
-                    }
-                    else
-                    {
-                        _statusMessage = $"Invalid input '{input}'! Enter a valid IPv4 address or Room Code.";
-                    }
+                    if (string.IsNullOrEmpty(input)) ConnectToIp("127.0.0.1");
+                    else if (IPAddress.TryParse(input, out _)) ConnectToIp(input);
+                    else if (TryRoomCodeToIp(input, out string decodedIp)) ConnectToIp(decodedIp);
+                    else _statusMessage = $"Invalid input '{input}'! Enter a valid IPv4 address or Room Code.";
                 }
                 GUI.enabled = true;
 
-                // --- LAN AUTO-DISCOVERY SCANNER ---
                 GUILayout.Space(6);
                 GUILayout.Label("<b>📡 LAN Auto-Discovery:</b>");
                 lock (_discoveredRooms)
@@ -362,7 +814,9 @@ namespace Starter
             GUILayout.EndArea();
         }
 
-        // --- STEAM NETWORKING METHODS ---
+        // ==========================================
+        // STEAM NETWORKING METHODS
+        // ==========================================
 
         private void StartSteamHost()
         {
@@ -450,103 +904,109 @@ namespace Starter
             }
             catch (Exception ex)
             {
-                _statusMessage = $"Steam Client Exception: {ex.Message}";
-                Debug.LogError($"[NetworkHudUI] Steam Client Error: {ex}");
+                _isConnecting = false;
+                _statusMessage = $"Steam Connect Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] Steam Connect Error: {ex}");
             }
         }
 
-        // --- LAN METHODS ---
+        // ==========================================
+        // LAN & DIRECT IP NETWORKING METHODS
+        // ==========================================
 
         private void StartLanHost()
         {
-            StopDiscovery();
-            EnsureTransports();
+            try
+            {
+                StopDiscovery();
+                EnsureTransports();
 
-            string localIp = GetLocalIPv4();
-            _hostRoomCode = IpToRoomCode(localIp);
+                // Switch transport to KCP
+                NetworkManager.singleton.transport = _kcpTransport;
+                Transport.active = _kcpTransport;
 
-            // Switch transport to KCP
-            NetworkManager.singleton.transport = _kcpTransport;
-            Transport.active = _kcpTransport;
-            _kcpTransport.Port = _port;
+                NetworkManager.singleton.StartHost();
 
-            NetworkManager.singleton.StartHost();
-            _statusMessage = $"LAN Host started!\nYour IP: <b><color=cyan>{localIp}</color></b>\nRoom Code: <b><color=yellow>{_hostRoomCode}</color></b>";
+                string localIp = GetLocalIPv4();
+                _hostRoomCode = IpToRoomCode(localIp);
+                _statusMessage = $"Hosting LAN Game!\nLocal IP: {localIp}\nRoom Code: {_hostRoomCode}";
+            }
+            catch (Exception ex)
+            {
+                _statusMessage = $"LAN Host Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] LAN Host Error: {ex}");
+            }
         }
 
         private void ConnectToIp(string targetIp)
         {
-            StopDiscovery();
-            EnsureTransports();
+            try
+            {
+                StopDiscovery();
+                EnsureTransports();
 
-            // Switch transport to KCP
-            NetworkManager.singleton.transport = _kcpTransport;
-            Transport.active = _kcpTransport;
-            _kcpTransport.Port = _port;
+                // Switch transport to KCP
+                NetworkManager.singleton.transport = _kcpTransport;
+                Transport.active = _kcpTransport;
 
-            NetworkManager.singleton.networkAddress = targetIp;
-            NetworkManager.singleton.StartClient();
+                NetworkManager.singleton.networkAddress = targetIp.Trim();
+                NetworkManager.singleton.StartClient();
 
-            _isConnecting = true;
-            _statusMessage = $"Connecting to {targetIp}:{_port}... (Waiting for handshake)";
+                _isConnecting = true;
+                _statusMessage = $"Connecting to LAN Host at {targetIp}...";
+            }
+            catch (Exception ex)
+            {
+                _isConnecting = false;
+                _statusMessage = $"LAN Connect Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] LAN Connect Error: {ex}");
+            }
         }
 
         private void Disconnect()
         {
-            _isConnecting = false;
-            _hostRoomCode = "";
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
+            try
+            {
+                _isConnecting = false;
+                _hostRoomCode = "";
 
-            if (NetworkServer.active && NetworkClient.isConnected)
-            {
-                NetworkManager.singleton.StopHost();
-            }
-            else if (NetworkClient.active)
-            {
-                NetworkManager.singleton.StopClient();
-            }
-            else if (NetworkServer.active)
-            {
-                NetworkManager.singleton.StopServer();
-            }
+                if (NetworkServer.active && NetworkClient.isConnected)
+                {
+                    NetworkManager.singleton.StopHost();
+                }
+                else if (NetworkClient.isConnected)
+                {
+                    NetworkManager.singleton.StopClient();
+                }
 
-            if (_currentLobbyId != CSteamID.Nil && _isSteamInitialized)
-            {
-                SteamMatchmaking.LeaveLobby(_currentLobbyId);
-                _currentLobbyId = CSteamID.Nil;
-            }
+                if (_isSteamInitialized && _currentLobbyId != CSteamID.Nil)
+                {
+                    SteamMatchmaking.LeaveLobby(_currentLobbyId);
+                    _currentLobbyId = CSteamID.Nil;
+                }
 
-            _statusMessage = "Disconnected by user.";
-            if (_menuCamera != null) _menuCamera.gameObject.SetActive(true);
-            StartListeningForHosts();
+                _statusMessage = "Disconnected from session.";
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetworkHudUI] Disconnect warning: {ex.Message}");
+            }
         }
 
-        // --- LAN BROADCAST & SCANNING ---
+        // ==========================================
+        // UDP LAN AUTO-DISCOVERY BEACONS
+        // ==========================================
 
         private void BroadcastHostBeacon()
         {
             try
             {
-                if (string.IsNullOrEmpty(_hostRoomCode)) return;
                 using (var udp = new UdpClient())
                 {
                     udp.EnableBroadcast = true;
-                    string message = $"{DiscoveryHeader}:{_hostRoomCode}:{_port}";
-                    byte[] data = Encoding.UTF8.GetBytes(message);
-
+                    string beacon = $"{DiscoveryHeader}:{_hostRoomCode}";
+                    byte[] data = Encoding.UTF8.GetBytes(beacon);
                     udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
-
-                    string localIp = GetLocalIPv4();
-                    int lastDot = localIp.LastIndexOf('.');
-                    if (lastDot > 0)
-                    {
-                        string subnetBroadcast = localIp.Substring(0, lastDot) + ".255";
-                        if (IPAddress.TryParse(subnetBroadcast, out var subnetAddr))
-                        {
-                            udp.Send(data, data.Length, new IPEndPoint(subnetAddr, DiscoveryPort));
-                        }
-                    }
                 }
             }
             catch { }

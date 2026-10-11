@@ -9,10 +9,15 @@ Player2Test/
 [Uu]ser[Ss]ettings/
 [Mm]emoryCaptures/
 [Rr]ecordings/
+*.app/
+*_BackUpThisFolder_ButDontShipItWithYourGame/
+*_BurstDebugInformation_DoNotShip/
 
 # Visual Studio / VS Code / Rider cache
 .vs/
 .idea/
+.vscode/
+*.slnx
 *.csproj
 *.unityproj
 *.sln

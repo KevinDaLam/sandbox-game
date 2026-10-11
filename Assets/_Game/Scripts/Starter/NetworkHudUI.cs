@@ -29,7 +29,7 @@ namespace Starter
 
                 if (GUILayout.Button("Start Host (Player 1)", GUILayout.Height(40)))
                 {
-                    ConfigureTransportAddress("127.0.0.1", _port);
+                    ConfigureTransportAddress("127.0.0.1", _port, "0.0.0.0");
                     NetworkManager.Singleton.StartHost();
                 }
 
@@ -39,7 +39,8 @@ namespace Starter
 
                 if (GUILayout.Button("Start Client (Player 2)", GUILayout.Height(40)))
                 {
-                    ConfigureTransportAddress(_ipAddress.Trim(), _port);
+                    string targetIp = string.IsNullOrWhiteSpace(_ipAddress) ? "127.0.0.1" : _ipAddress.Trim();
+                    ConfigureTransportAddress(targetIp, _port, "0.0.0.0");
                     NetworkManager.Singleton.StartClient();
                 }
             }
@@ -58,12 +59,12 @@ namespace Starter
             GUILayout.EndArea();
         }
 
-        private void ConfigureTransportAddress(string ip, ushort port)
+        private void ConfigureTransportAddress(string ip, ushort port, string listenAddress = "0.0.0.0")
         {
             var transport = NetworkManager.Singleton.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
             if (transport != null)
             {
-                transport.SetConnectionData(ip, port);
+                transport.SetConnectionData(ip, port, listenAddress);
             }
         }
     }

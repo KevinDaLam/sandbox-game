@@ -196,10 +196,14 @@ namespace Starter
                 }
                 GUILayout.Label($"Connected Players: {NetworkManager.Singleton.ConnectedClients.Count}");
 
+                GUILayout.Label("<color=#CCCCCC><i>(Press Esc or Tab to unlock mouse)</i></color>");
+
                 if (GUILayout.Button("Disconnect", GUILayout.Height(35)))
                 {
                     _isConnecting = false;
                     _hostRoomCode = "";
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
                     NetworkManager.Singleton.Shutdown();
                     _statusMessage = "Disconnected by user.";
                     StartListeningForHosts();

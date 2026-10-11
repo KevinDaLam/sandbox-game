@@ -27,6 +27,7 @@ namespace Starter
         private float _verticalLookRotation;
         private float _verticalVelocity;
         private SimplePickupObject _heldObject;
+        private bool _isCursorLocked = true;
 
         private void Awake()
         {
@@ -46,17 +47,59 @@ namespace Starter
                 return;
             }
 
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            SetCursorLock(true);
+        }
+
+        private void OnDisable()
+        {
+            if (IsOwner)
+            {
+                SetCursorLock(false);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (IsOwner)
+            {
+                SetCursorLock(false);
+            }
         }
 
         private void Update()
         {
             if (!IsOwner) return;
 
-            HandleLook();
+            // Press Escape or Tab to toggle mouse lock and click on-screen UI buttons!
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Tab))
+            {
+                SetCursorLock(!_isCursorLocked);
+            }
+
+            // If cursor is unlocked and player clicks the game screen, lock it back
+            if (!_isCursorLocked && Input.GetMouseButtonDown(0))
+            {
+                // Only lock back if not clicking on the top-left HUD area
+                if (Input.mousePosition.x > 380 || Input.mousePosition.y < (Screen.height - 480))
+                {
+                    SetCursorLock(true);
+                }
+            }
+
+            if (_isCursorLocked)
+            {
+                HandleLook();
+            }
+
             HandleMovement();
             HandleInteraction();
+        }
+
+        private void SetCursorLock(bool locked)
+        {
+            _isCursorLocked = locked;
+            Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
+            Cursor.visible = !locked;
         }
 
         private void HandleLook()

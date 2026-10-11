@@ -17,6 +17,7 @@ namespace Starter
         private const string DiscoveryHeader = "SANDBOX_GAME_LAN_HOST";
 
         private string _statusMessage = "Idle. Ready to connect.";
+        private string _steamErrorMessage = "";
         private string _hostRoomCode = "";
         private bool _isConnecting = false;
 
@@ -60,19 +61,7 @@ namespace Starter
 
         private void Start()
         {
-            // Initialize Steam client early so GUI knows if Steam is running
-            try
-            {
-                if (!Steamworks.SteamClient.IsValid)
-                {
-                    Steamworks.SteamClient.Init(480, false);
-                    Debug.Log($"[NetworkHudUI] Steam initialized as {Steamworks.SteamClient.Name} (ID: {Steamworks.SteamClient.SteamId})");
-                }
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogWarning($"[NetworkHudUI] Steam init check: {ex.Message}");
-            }
+            InitializeSteam();
 
             if (NetworkManager.Singleton != null)
             {
@@ -84,6 +73,24 @@ namespace Starter
 
             // Immediately start scanning for any hosted games on the LAN
             StartListeningForHosts();
+        }
+
+        private void InitializeSteam()
+        {
+            try
+            {
+                if (!Steamworks.SteamClient.IsValid)
+                {
+                    Steamworks.SteamClient.Init(480, false);
+                    _steamErrorMessage = "";
+                    Debug.Log($"[NetworkHudUI] Steam initialized as {Steamworks.SteamClient.Name} (ID: {Steamworks.SteamClient.SteamId})");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                _steamErrorMessage = ex.GetType().Name + ": " + ex.Message;
+                Debug.LogWarning($"[NetworkHudUI] Steam init check: {ex}");
+            }
         }
 
         private void Update()
@@ -139,7 +146,7 @@ namespace Starter
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 360, 560));
+            GUILayout.BeginArea(new Rect(10, 10, 360, 580));
 
             if (NetworkManager.Singleton == null)
             {
@@ -154,7 +161,15 @@ namespace Starter
                 bool steamReady = Steamworks.SteamClient.IsValid;
                 if (!steamReady)
                 {
-                    GUILayout.Label("<color=yellow>Steam client not detected or initializing...</color>");
+                    GUILayout.Label("<color=yellow>Steam client not connected.</color>");
+                    if (!string.IsNullOrEmpty(_steamErrorMessage))
+                    {
+                        GUILayout.Label($"<color=red><size=10>{_steamErrorMessage}</size></color>");
+                    }
+                    if (GUILayout.Button("🔄 Retry Steam Init", GUILayout.Height(24)))
+                    {
+                        InitializeSteam();
+                    }
                 }
                 else
                 {

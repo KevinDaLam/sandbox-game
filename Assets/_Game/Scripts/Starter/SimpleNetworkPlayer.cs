@@ -32,31 +32,46 @@ namespace Starter
         private void Awake()
         {
             _characterController = GetComponent<CharacterController>();
+            if (_playerCamera != null)
+            {
+                _playerCamera.gameObject.SetActive(false);
+            }
+            enabled = false;
         }
 
         public override void OnStartLocalPlayer()
         {
             base.OnStartLocalPlayer();
-            SetCursorLock(true);
-        }
+            enabled = true;
 
-        public override void OnStartClient()
-        {
-            base.OnStartClient();
-            if (!isLocalPlayer)
+            if (_playerCamera != null)
             {
-                if (_playerCamera != null)
-                {
-                    _playerCamera.gameObject.SetActive(false);
-                }
-                enabled = false;
+                _playerCamera.gameObject.SetActive(true);
+                _playerCamera.enabled = true;
+                _playerCamera.tag = "MainCamera";
             }
+
+            // Deactivate any other cameras in the scene so this FPV camera has full control
+            Camera[] allCameras = FindObjectsByType<Camera>(FindObjectsSortMode.None);
+            for (int i = 0; i < allCameras.Length; i++)
+            {
+                if (allCameras[i] != _playerCamera)
+                {
+                    allCameras[i].gameObject.SetActive(false);
+                }
+            }
+
+            SetCursorLock(true);
         }
 
         public override void OnStopLocalPlayer()
         {
             base.OnStopLocalPlayer();
             SetCursorLock(false);
+            if (_playerCamera != null)
+            {
+                _playerCamera.gameObject.SetActive(false);
+            }
         }
 
         private void OnDisable()

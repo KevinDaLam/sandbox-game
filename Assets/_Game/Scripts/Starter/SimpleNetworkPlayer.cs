@@ -1,13 +1,13 @@
-using Unity.Netcode;
+using Mirror;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Networked First-Person Player Controller (Netcode for GameObjects).
+    /// Networked First-Person Player Controller (Mirror).
     /// Software Engineer Note:
-    /// In NGO, every connected client has a copy of all players.
-    /// 'IsOwner' is true ONLY for the local machine controlling this character.
+    /// In Mirror, every connected client has a copy of all players.
+    /// 'isLocalPlayer' is true ONLY for the local machine controlling this character.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class SimpleNetworkPlayer : NetworkBehaviour
@@ -34,33 +34,34 @@ namespace Starter
             _characterController = GetComponent<CharacterController>();
         }
 
-        public override void OnNetworkSpawn()
+        public override void OnStartLocalPlayer()
         {
-            // CRITICAL: Disable camera and controls for other players so we don't control each other!
-            if (!IsOwner)
+            base.OnStartLocalPlayer();
+            SetCursorLock(true);
+        }
+
+        public override void OnStartClient()
+        {
+            base.OnStartClient();
+            if (!isLocalPlayer)
             {
                 if (_playerCamera != null)
                 {
                     _playerCamera.gameObject.SetActive(false);
                 }
                 enabled = false;
-                return;
             }
+        }
 
-            SetCursorLock(true);
+        public override void OnStopLocalPlayer()
+        {
+            base.OnStopLocalPlayer();
+            SetCursorLock(false);
         }
 
         private void OnDisable()
         {
-            if (IsOwner)
-            {
-                SetCursorLock(false);
-            }
-        }
-
-        private void OnDestroy()
-        {
-            if (IsOwner)
+            if (isLocalPlayer)
             {
                 SetCursorLock(false);
             }
@@ -68,7 +69,7 @@ namespace Starter
 
         private void Update()
         {
-            if (!IsOwner) return;
+            if (!isLocalPlayer) return;
 
             // Press Escape or Tab to toggle mouse lock and click on-screen UI buttons!
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Tab))
@@ -152,7 +153,7 @@ namespace Starter
                     {
                         if (hit.collider.TryGetComponent<SimplePickupObject>(out var pickup))
                         {
-                            pickup.Pickup(NetworkObjectId);
+                            pickup.Pickup(netId);
                             _heldObject = pickup;
                         }
                     }

@@ -14,7 +14,9 @@
     "com.unity.multiplayer.center": "2.0.1",
     "com.unity.multiplayer.tools": "2.2.12",
     "com.unity.netcode.gameobjects": "2.13.3",
-    "com.community.netcode.transport.facepunch": "https://github.com/Unity-Technologies/multiplayer-community-contributions.git?path=/Transports/com.community.netcode.transport.facepunch",
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.rlabrecque.steamworks.net": "2025.164.1",
+    "com.mirror.steamworks.net": "https://github.com/Chykary/FizzySteamworks.git?path=/com.mirror.steamworks.net",
     "com.unity.pipeline": "0.8.0-exp.1",
     "com.unity.purchasing": "5.4.4",
     "com.unity.render-pipelines.universal": "17.6.0",
@@ -59,5 +61,15 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
     "com.unity.modules.xr": "1.0.0"
-  }
+  },
+  "scopedRegistries": [
+    {
+      "name": "package.openupm.com",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.mirrornetworking.mirror",
+        "com.rlabrecque.steamworks.net"
+      ]
+    }
+  ]
 }

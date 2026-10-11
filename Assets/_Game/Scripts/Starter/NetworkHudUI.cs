@@ -1,11 +1,21 @@
-using Unity.Netcode;
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Mirror;
+using Mirror.FizzySteam;
+using kcp2k;
+using Steamworks;
 using UnityEngine;
 
 namespace Starter
 {
     /// <summary>
-    /// Simple immediate-mode GUI for starting Host or Client.
-    /// Eliminates the need to wire up UI Canvas components while prototyping.
+    /// Dual Steam P2P (FizzySteamworks + Steamworks.NET) and LAN (KcpTransport) Network HUD.
+    /// Matches the exact networking stack of 'Gamble With Your Friends'.
     /// </summary>
     public class NetworkHudUI : MonoBehaviour
     {
@@ -20,93 +30,163 @@ namespace Starter
         private string _steamErrorMessage = "";
         private string _hostRoomCode = "";
         private bool _isConnecting = false;
+        private bool _isSteamInitialized = false;
+
+        // Steam Callbacks & CallResults
+        private CallResult<LobbyCreated_t> _lobbyCreatedCallResult;
+        private Callback<GameLobbyJoinRequested_t> _lobbyJoinRequestedCallback;
+        private CSteamID _currentLobbyId = CSteamID.Nil;
 
         // LAN Auto-Discovery
-        private System.Net.Sockets.UdpClient _discoveryClient;
-        private System.Threading.CancellationTokenSource _discoveryCts;
-        private readonly System.Collections.Generic.Dictionary<string, string> _discoveredRooms = new System.Collections.Generic.Dictionary<string, string>(); // code -> ip
+        private UdpClient _discoveryClient;
+        private CancellationTokenSource _discoveryCts;
+        private readonly Dictionary<string, string> _discoveredRooms = new Dictionary<string, string>(); // code -> ip
         private float _lastBroadcastTime = 0f;
+
+        // Cached Transports & Camera
+        private FizzySteamworks _fizzyTransport;
+        private KcpTransport _kcpTransport;
+        private Camera _menuCamera;
+
+        private void Awake()
+        {
+            EnsureTransports();
+        }
 
         private void OnEnable()
         {
-            if (NetworkManager.Singleton != null)
-            {
-                NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
-                NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
-            }
+            NetworkClient.OnConnectedEvent += HandleClientConnected;
+            NetworkClient.OnDisconnectedEvent += HandleClientDisconnected;
+            NetworkClient.OnErrorEvent += HandleClientError;
         }
 
         private void OnDisable()
         {
-            StopDiscovery();
-            if (NetworkManager.Singleton != null)
-            {
-                NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
-                NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
-            }
-        }
-
-        private void OnDestroy()
-        {
-            StopDiscovery();
-            try
-            {
-                if (Steamworks.SteamClient.IsValid)
-                {
-                    Steamworks.SteamClient.Shutdown();
-                }
-            }
-            catch { }
+            NetworkClient.OnConnectedEvent -= HandleClientConnected;
+            NetworkClient.OnDisconnectedEvent -= HandleClientDisconnected;
+            NetworkClient.OnErrorEvent -= HandleClientError;
         }
 
         private void Start()
         {
+            EnsureMenuCamera();
             InitializeSteam();
+            StartListeningForHosts();
+        }
 
-            if (NetworkManager.Singleton != null)
+        private void EnsureMenuCamera()
+        {
+            if (Camera.main == null)
             {
-                NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
-                NetworkManager.Singleton.OnClientConnectedCallback += HandleClientConnected;
-                NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
-                NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
+                var camGo = new GameObject("MenuCamera");
+                _menuCamera = camGo.AddComponent<Camera>();
+                camGo.tag = "MainCamera";
+                camGo.transform.position = new Vector3(0, 2.5f, -8f);
+                camGo.transform.rotation = Quaternion.Euler(12f, 0f, 0f);
+                camGo.AddComponent<AudioListener>();
+            }
+            else
+            {
+                _menuCamera = Camera.main;
+            }
+        }
+
+        private void HandleClientConnected()
+        {
+            _isConnecting = false;
+            _statusMessage = NetworkServer.active ? "Host started successfully!" : "Connected to host!";
+            if (_menuCamera != null) _menuCamera.gameObject.SetActive(false);
+        }
+
+        private void HandleClientDisconnected()
+        {
+            _isConnecting = false;
+            _statusMessage = "Disconnected from host.";
+            if (_menuCamera != null) _menuCamera.gameObject.SetActive(true);
+            StartListeningForHosts();
+        }
+
+        private void HandleClientError(TransportError error, string reason)
+        {
+            _isConnecting = false;
+            _statusMessage = $"Transport Error ({error}): {reason}";
+            if (_menuCamera != null) _menuCamera.gameObject.SetActive(true);
+        }
+
+        private void EnsureTransports()
+        {
+            if (NetworkManager.singleton == null) return;
+
+            _fizzyTransport = NetworkManager.singleton.GetComponent<FizzySteamworks>();
+            if (_fizzyTransport == null)
+            {
+                _fizzyTransport = NetworkManager.singleton.gameObject.AddComponent<FizzySteamworks>();
             }
 
-            // Immediately start scanning for any hosted games on the LAN
-            StartListeningForHosts();
+            _kcpTransport = NetworkManager.singleton.GetComponent<KcpTransport>();
+            if (_kcpTransport == null)
+            {
+                _kcpTransport = NetworkManager.singleton.gameObject.AddComponent<KcpTransport>();
+            }
+
+            // Default transport on startup
+            if (NetworkManager.singleton.transport == null)
+            {
+                NetworkManager.singleton.transport = _fizzyTransport;
+                Transport.active = _fizzyTransport;
+            }
         }
 
         private void InitializeSteam()
         {
             try
             {
-                if (!Steamworks.SteamClient.IsValid)
+                if (!SteamAPI.IsSteamRunning())
                 {
-                    Steamworks.SteamClient.Init(480, false);
+                    _steamErrorMessage = "Steam client is not running. Please launch Steam.";
+                    _isSteamInitialized = false;
+                    return;
+                }
+
+                if (SteamAPI.Init())
+                {
+                    _isSteamInitialized = true;
                     _steamErrorMessage = "";
-                    Debug.Log($"[NetworkHudUI] Steam initialized as {Steamworks.SteamClient.Name} (ID: {Steamworks.SteamClient.SteamId})");
+                    string persona = SteamFriends.GetPersonaName();
+                    ulong steamId = SteamUser.GetSteamID().m_SteamID;
+                    Debug.Log($"[NetworkHudUI] Steamworks.NET initialized successfully! User: {persona} ({steamId})");
+
+                    // Register Steam Lobby Friend Invite callback
+                    _lobbyCreatedCallResult = CallResult<LobbyCreated_t>.Create(OnLobbyCreated);
+                    _lobbyJoinRequestedCallback = Callback<GameLobbyJoinRequested_t>.Create(OnGameLobbyJoinRequested);
+                }
+                else
+                {
+                    _isSteamInitialized = false;
+                    _steamErrorMessage = "SteamAPI.Init() returned false (Check steam_appid.txt).";
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                _steamErrorMessage = ex.GetType().Name + ": " + ex.Message;
+                _isSteamInitialized = false;
+                _steamErrorMessage = $"{ex.GetType().Name}: {ex.Message}";
                 Debug.LogWarning($"[NetworkHudUI] Steam init check: {ex}");
             }
         }
 
         private void Update()
         {
-            // Process Steam callbacks
-            try
+            if (_isSteamInitialized)
             {
-                if (Steamworks.SteamClient.IsValid)
+                try
                 {
-                    Steamworks.SteamClient.RunCallbacks();
+                    SteamAPI.RunCallbacks();
                 }
+                catch { }
             }
-            catch { }
 
-            // If we are hosting, broadcast beacon every 1 second
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
+            // If hosting on LAN, broadcast beacon every second
+            if (NetworkServer.active && !string.IsNullOrEmpty(_hostRoomCode))
             {
                 if (Time.unscaledTime - _lastBroadcastTime > 1.0f)
                 {
@@ -116,52 +196,40 @@ namespace Starter
             }
         }
 
-        private void HandleClientConnected(ulong clientId)
+        private void OnDestroy()
         {
-            _isConnecting = false;
-            if (NetworkManager.Singleton.IsHost)
+            StopDiscovery();
+            try
             {
-                _statusMessage = $"Player {clientId} joined! Total: {NetworkManager.Singleton.ConnectedClients.Count}";
+                if (_isSteamInitialized)
+                {
+                    SteamAPI.Shutdown();
+                    _isSteamInitialized = false;
+                }
             }
-            else
-            {
-                _statusMessage = $"Successfully connected to host as Client ID: {clientId}!";
-            }
-        }
-
-        private void HandleClientDisconnected(ulong clientId)
-        {
-            _isConnecting = false;
-            string reason = NetworkManager.Singleton.DisconnectReason;
-            if (string.IsNullOrEmpty(reason))
-            {
-                reason = "Connection timed out or rejected. Make sure both PCs are on the same Wi-Fi and Host firewall allows UDP port 7777.";
-            }
-            _statusMessage = $"Disconnected (ID: {clientId}): {reason}";
-            Debug.LogWarning($"[NetworkHudUI] Disconnected: {reason}");
-            
-            // Resume listening when disconnected
-            StartListeningForHosts();
+            catch { }
         }
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 360, 580));
+            GUI.Box(new Rect(10, 10, 360, 580), GUIContent.none);
+            GUILayout.BeginArea(new Rect(16, 16, 348, 568));
 
-            if (NetworkManager.Singleton == null)
+            if (NetworkManager.singleton == null)
             {
                 GUILayout.Label("<color=red><b>NetworkManager not found in scene!</b></color>");
                 GUILayout.EndArea();
                 return;
             }
 
-            if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
+            bool isNetworkActive = NetworkServer.active || NetworkClient.active;
+
+            if (!isNetworkActive)
             {
                 GUILayout.Label("<b>--- STEAM P2P (SPACEWAR 480) ---</b>");
-                bool steamReady = Steamworks.SteamClient.IsValid;
-                if (!steamReady)
+                if (!_isSteamInitialized)
                 {
-                    GUILayout.Label("<color=yellow>Steam client not connected.</color>");
+                    GUILayout.Label("<color=yellow>Steam client not initialized.</color>");
                     if (!string.IsNullOrEmpty(_steamErrorMessage))
                     {
                         GUILayout.Label($"<color=red><size=10>{_steamErrorMessage}</size></color>");
@@ -173,7 +241,10 @@ namespace Starter
                 }
                 else
                 {
-                    GUILayout.Label($"Steam User: <b><color=cyan>{Steamworks.SteamClient.Name}</color></b>");
+                    string persona = SteamFriends.GetPersonaName();
+                    ulong mySteamId = SteamUser.GetSteamID().m_SteamID;
+                    GUILayout.Label($"Steam User: <b><color=cyan>{persona}</color></b>");
+                    GUILayout.Label($"Your ID64: <color=yellow>{mySteamId}</color>");
                 }
 
                 if (GUILayout.Button("🎮 Host Steam Lobby", GUILayout.Height(38)))
@@ -202,14 +273,7 @@ namespace Starter
 
                 if (GUILayout.Button("Start Host (LAN)", GUILayout.Height(34)))
                 {
-                    StopDiscovery();
-                    string localIp = GetLocalIPv4();
-                    _hostRoomCode = IpToRoomCode(localIp);
-                    ConfigureTransportAddress("127.0.0.1", _port, "0.0.0.0");
-                    bool success = NetworkManager.Singleton.StartHost();
-                    _statusMessage = success 
-                        ? $"LAN Host started!\nYour IP: <b><color=cyan>{localIp}</color></b>\nRoom Code: <b><color=yellow>{_hostRoomCode}</color></b>" 
-                        : "Failed to start Host!";
+                    StartLanHost();
                 }
 
                 GUILayout.Space(6);
@@ -222,22 +286,19 @@ namespace Starter
                     string input = _joinCodeInput;
                     if (string.IsNullOrEmpty(input))
                     {
-                        // Fallback to local loopback if blank
                         ConnectToIp("127.0.0.1");
                     }
-                    else if (System.Net.IPAddress.TryParse(input, out _))
+                    else if (IPAddress.TryParse(input, out _))
                     {
-                        // Direct IP entered (e.g. 192.168.1.175)
                         ConnectToIp(input);
                     }
                     else if (TryRoomCodeToIp(input, out string decodedIp))
                     {
-                        // Room Code entered
                         ConnectToIp(decodedIp);
                     }
                     else
                     {
-                        _statusMessage = $"Invalid input '{input}'! Enter a valid IPv4 address (e.g. 192.168.1.175) or a Room Code.";
+                        _statusMessage = $"Invalid input '{input}'! Enter a valid IPv4 address or Room Code.";
                     }
                 }
                 GUI.enabled = true;
@@ -268,26 +329,29 @@ namespace Starter
             }
             else
             {
-                string mode = NetworkManager.Singleton.IsHost ? "Host" : "Client";
+                bool isHost = NetworkServer.active && NetworkClient.isConnected;
+                string mode = isHost ? "Host" : (NetworkClient.isConnected ? "Client" : "Connecting...");
                 GUILayout.Label($"<b>Running as: {mode}</b>");
-                if (NetworkManager.Singleton.IsHost && !string.IsNullOrEmpty(_hostRoomCode))
+
+                if (isHost)
                 {
-                    GUILayout.Label($"<b>Your IP: <color=cyan>{GetLocalIPv4()}</color></b>");
-                    GUILayout.Label($"<b>Room Code: <color=yellow>{_hostRoomCode}</color></b>");
+                    if (!string.IsNullOrEmpty(_hostRoomCode))
+                    {
+                        GUILayout.Label($"<b>Your IP: <color=cyan>{GetLocalIPv4()}</color></b>");
+                        GUILayout.Label($"<b>Room Code: <color=yellow>{_hostRoomCode}</color></b>");
+                    }
+                    else if (_isSteamInitialized)
+                    {
+                        GUILayout.Label($"<b>Steam ID: <color=yellow>{SteamUser.GetSteamID().m_SteamID}</color></b>");
+                    }
+                    GUILayout.Label($"Connected Players: {NetworkServer.connections.Count}");
                 }
-                GUILayout.Label($"Connected Players: {NetworkManager.Singleton.ConnectedClients.Count}");
 
                 GUILayout.Label("<color=#CCCCCC><i>(Press Esc or Tab to unlock mouse)</i></color>");
 
                 if (GUILayout.Button("Disconnect", GUILayout.Height(35)))
                 {
-                    _isConnecting = false;
-                    _hostRoomCode = "";
-                    Cursor.lockState = CursorLockMode.None;
-                    Cursor.visible = true;
-                    NetworkManager.Singleton.Shutdown();
-                    _statusMessage = "Disconnected by user.";
-                    StartListeningForHosts();
+                    Disconnect();
                 }
             }
 
@@ -298,30 +362,164 @@ namespace Starter
             GUILayout.EndArea();
         }
 
-        private void ConnectToIp(string targetIp)
+        // --- STEAM NETWORKING METHODS ---
+
+        private void StartSteamHost()
         {
-            StopDiscovery();
-            ConfigureTransportAddress(targetIp, _port, "0.0.0.0");
-            bool success = NetworkManager.Singleton.StartClient();
-            if (success)
+            if (!_isSteamInitialized)
             {
-                _isConnecting = true;
-                _statusMessage = $"Connecting to {targetIp}:{_port}... (Waiting for handshake)";
+                _statusMessage = "Cannot host on Steam: Steam client is not running or logged in!";
+                return;
             }
-            else
+
+            try
             {
-                _isConnecting = false;
-                _statusMessage = $"Failed to initiate client connection to {targetIp}:{_port}!";
+                StopDiscovery();
+                EnsureTransports();
+
+                // Switch transport to FizzySteamworks
+                NetworkManager.singleton.transport = _fizzyTransport;
+                Transport.active = _fizzyTransport;
+
+                // Create public Steam lobby
+                SteamAPICall_t call = SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePublic, 4);
+                _lobbyCreatedCallResult.Set(call);
+
+                NetworkManager.singleton.StartHost();
+                ulong mySteamId = SteamUser.GetSteamID().m_SteamID;
+                _statusMessage = $"Hosting via Steam P2P!\nYour Steam ID64:\n<b><color=yellow>{mySteamId}</color></b>\n(Invite friends via Steam Overlay Shift+Tab)";
+            }
+            catch (Exception ex)
+            {
+                _statusMessage = $"Steam Host Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] Steam Host Error: {ex}");
             }
         }
 
-        private void ConfigureTransportAddress(string ip, ushort port, string listenAddress = "0.0.0.0")
+        private void OnLobbyCreated(LobbyCreated_t callback, bool ioFailure)
         {
-            var transport = NetworkManager.Singleton.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
-            if (transport != null)
+            if (ioFailure || callback.m_eResult != EResult.k_EResultOK)
             {
-                transport.SetConnectionData(ip, port, listenAddress);
+                Debug.LogWarning($"[NetworkHudUI] Steam lobby creation result: {callback.m_eResult}");
+                return;
             }
+
+            _currentLobbyId = new CSteamID(callback.m_ulSteamIDLobby);
+            SteamMatchmaking.SetLobbyData(_currentLobbyId, "HostSteamID", SteamUser.GetSteamID().ToString());
+            SteamMatchmaking.SetLobbyData(_currentLobbyId, "name", $"{SteamFriends.GetPersonaName()}'s Game");
+            Debug.Log($"[NetworkHudUI] Steam Lobby created successfully! Lobby ID: {callback.m_ulSteamIDLobby}");
+        }
+
+        private void OnGameLobbyJoinRequested(GameLobbyJoinRequested_t callback)
+        {
+            Debug.Log($"[NetworkHudUI] Steam Lobby Join requested by invite to lobby: {callback.m_steamIDLobby}");
+            string hostSteamIdStr = SteamMatchmaking.GetLobbyData(callback.m_steamIDLobby, "HostSteamID");
+            if (ulong.TryParse(hostSteamIdStr, out ulong hostSteamId))
+            {
+                StartSteamClient(hostSteamId);
+            }
+            else
+            {
+                CSteamID owner = SteamMatchmaking.GetLobbyOwner(callback.m_steamIDLobby);
+                StartSteamClient(owner.m_SteamID);
+            }
+        }
+
+        private void StartSteamClient(ulong hostSteamId)
+        {
+            if (!_isSteamInitialized)
+            {
+                _statusMessage = "Cannot join on Steam: Steam client is not running or logged in!";
+                return;
+            }
+
+            try
+            {
+                StopDiscovery();
+                EnsureTransports();
+
+                // Switch transport to FizzySteamworks
+                NetworkManager.singleton.transport = _fizzyTransport;
+                Transport.active = _fizzyTransport;
+
+                NetworkManager.singleton.networkAddress = hostSteamId.ToString();
+                NetworkManager.singleton.StartClient();
+
+                _isConnecting = true;
+                _statusMessage = $"Connecting to Steam Host {hostSteamId} via Valve Relay...";
+            }
+            catch (Exception ex)
+            {
+                _statusMessage = $"Steam Client Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] Steam Client Error: {ex}");
+            }
+        }
+
+        // --- LAN METHODS ---
+
+        private void StartLanHost()
+        {
+            StopDiscovery();
+            EnsureTransports();
+
+            string localIp = GetLocalIPv4();
+            _hostRoomCode = IpToRoomCode(localIp);
+
+            // Switch transport to KCP
+            NetworkManager.singleton.transport = _kcpTransport;
+            Transport.active = _kcpTransport;
+            _kcpTransport.Port = _port;
+
+            NetworkManager.singleton.StartHost();
+            _statusMessage = $"LAN Host started!\nYour IP: <b><color=cyan>{localIp}</color></b>\nRoom Code: <b><color=yellow>{_hostRoomCode}</color></b>";
+        }
+
+        private void ConnectToIp(string targetIp)
+        {
+            StopDiscovery();
+            EnsureTransports();
+
+            // Switch transport to KCP
+            NetworkManager.singleton.transport = _kcpTransport;
+            Transport.active = _kcpTransport;
+            _kcpTransport.Port = _port;
+
+            NetworkManager.singleton.networkAddress = targetIp;
+            NetworkManager.singleton.StartClient();
+
+            _isConnecting = true;
+            _statusMessage = $"Connecting to {targetIp}:{_port}... (Waiting for handshake)";
+        }
+
+        private void Disconnect()
+        {
+            _isConnecting = false;
+            _hostRoomCode = "";
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+
+            if (NetworkServer.active && NetworkClient.isConnected)
+            {
+                NetworkManager.singleton.StopHost();
+            }
+            else if (NetworkClient.active)
+            {
+                NetworkManager.singleton.StopClient();
+            }
+            else if (NetworkServer.active)
+            {
+                NetworkManager.singleton.StopServer();
+            }
+
+            if (_currentLobbyId != CSteamID.Nil && _isSteamInitialized)
+            {
+                SteamMatchmaking.LeaveLobby(_currentLobbyId);
+                _currentLobbyId = CSteamID.Nil;
+            }
+
+            _statusMessage = "Disconnected by user.";
+            if (_menuCamera != null) _menuCamera.gameObject.SetActive(true);
+            StartListeningForHosts();
         }
 
         // --- LAN BROADCAST & SCANNING ---
@@ -331,24 +529,22 @@ namespace Starter
             try
             {
                 if (string.IsNullOrEmpty(_hostRoomCode)) return;
-                using (var udp = new System.Net.Sockets.UdpClient())
+                using (var udp = new UdpClient())
                 {
                     udp.EnableBroadcast = true;
                     string message = $"{DiscoveryHeader}:{_hostRoomCode}:{_port}";
-                    byte[] data = System.Text.Encoding.UTF8.GetBytes(message);
+                    byte[] data = Encoding.UTF8.GetBytes(message);
 
-                    // Broadcast to standard broadcast address
-                    udp.Send(data, data.Length, new System.Net.IPEndPoint(System.Net.IPAddress.Broadcast, DiscoveryPort));
+                    udp.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
 
-                    // Also broadcast on local subnet directly (e.g. 192.168.1.255)
                     string localIp = GetLocalIPv4();
                     int lastDot = localIp.LastIndexOf('.');
                     if (lastDot > 0)
                     {
                         string subnetBroadcast = localIp.Substring(0, lastDot) + ".255";
-                        if (System.Net.IPAddress.TryParse(subnetBroadcast, out var subnetAddr))
+                        if (IPAddress.TryParse(subnetBroadcast, out var subnetAddr))
                         {
-                            udp.Send(data, data.Length, new System.Net.IPEndPoint(subnetAddr, DiscoveryPort));
+                            udp.Send(data, data.Length, new IPEndPoint(subnetAddr, DiscoveryPort));
                         }
                     }
                 }
@@ -359,21 +555,21 @@ namespace Starter
         private void StartListeningForHosts()
         {
             StopDiscovery();
-            _discoveryCts = new System.Threading.CancellationTokenSource();
+            _discoveryCts = new CancellationTokenSource();
             var token = _discoveryCts.Token;
 
-            System.Threading.Tasks.Task.Run(async () =>
+            Task.Run(async () =>
             {
                 try
                 {
-                    _discoveryClient = new System.Net.Sockets.UdpClient();
-                    _discoveryClient.Client.SetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.ReuseAddress, true);
-                    _discoveryClient.Client.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Any, DiscoveryPort));
+                    _discoveryClient = new UdpClient();
+                    _discoveryClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                    _discoveryClient.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
 
                     while (!token.IsCancellationRequested)
                     {
                         var result = await _discoveryClient.ReceiveAsync();
-                        string msg = System.Text.Encoding.UTF8.GetString(result.Buffer);
+                        string msg = Encoding.UTF8.GetString(result.Buffer);
                         if (msg.StartsWith(DiscoveryHeader))
                         {
                             var parts = msg.Split(':');
@@ -418,10 +614,10 @@ namespace Starter
         {
             try
             {
-                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+                var host = Dns.GetHostEntry(Dns.GetHostName());
                 foreach (var ip in host.AddressList)
                 {
-                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    if (ip.AddressFamily == AddressFamily.InterNetwork)
                     {
                         string str = ip.ToString();
                         if (!str.StartsWith("127.") && !str.StartsWith("169.254."))
@@ -435,10 +631,9 @@ namespace Starter
             return "127.0.0.1";
         }
 
-        // --- Room Code Hex Converter (Lossless 8-hex format) ---
         private static string IpToRoomCode(string ipAddress)
         {
-            if (System.Net.IPAddress.TryParse(ipAddress, out var ip))
+            if (IPAddress.TryParse(ipAddress, out var ip))
             {
                 byte[] bytes = ip.GetAddressBytes();
                 return $"{bytes[0]:X2}{bytes[1]:X2}{bytes[2]:X2}{bytes[3]:X2}";
@@ -462,10 +657,10 @@ namespace Starter
             {
                 try
                 {
-                    byte b0 = System.Convert.ToByte(code.Substring(0, 2), 16);
-                    byte b1 = System.Convert.ToByte(code.Substring(2, 2), 16);
-                    byte b2 = System.Convert.ToByte(code.Substring(4, 2), 16);
-                    byte b3 = System.Convert.ToByte(code.Substring(6, 2), 16);
+                    byte b0 = Convert.ToByte(code.Substring(0, 2), 16);
+                    byte b1 = Convert.ToByte(code.Substring(2, 2), 16);
+                    byte b2 = Convert.ToByte(code.Substring(4, 2), 16);
+                    byte b3 = Convert.ToByte(code.Substring(6, 2), 16);
                     ipAddress = $"{b0}.{b1}.{b2}.{b3}";
                     return true;
                 }
@@ -473,98 +668,6 @@ namespace Starter
             }
 
             return false;
-        }
-
-        // --- STEAMWORKS P2P METHODS ---
-
-        private async void StartSteamHost()
-        {
-            if (!Steamworks.SteamClient.IsValid)
-            {
-                _statusMessage = "Cannot host on Steam: Steam client is not running or logged in!";
-                return;
-            }
-
-            try
-            {
-                StopDiscovery();
-                EnsureFacepunchTransport();
-
-                // Create a Steam lobby for up to 4 players
-                var lobby = await Steamworks.SteamMatchmaking.CreateLobbyAsync(4);
-                if (lobby.HasValue)
-                {
-                    lobby.Value.SetPublic();
-                    lobby.Value.SetJoinable(true);
-                    lobby.Value.SetData("name", $"{Steamworks.SteamClient.Name}'s Lobby");
-
-                    bool success = NetworkManager.Singleton.StartHost();
-                    if (success)
-                    {
-                        ulong mySteamId = Steamworks.SteamClient.SteamId.Value;
-                        _statusMessage = $"Steam Lobby Created!\nYour Steam ID64:\n<b><color=yellow>{mySteamId}</color></b>\n(Tell friend your Steam ID or invite via Shift+Tab!)";
-                    }
-                    else
-                    {
-                        _statusMessage = "Failed to start NetworkManager as Host!";
-                    }
-                }
-                else
-                {
-                    _statusMessage = "Failed to create Steam Lobby with Valve servers!";
-                }
-            }
-            catch (System.Exception ex)
-            {
-                _statusMessage = $"Steam Host Exception: {ex.Message}";
-                Debug.LogError($"[NetworkHudUI] Steam Host Error: {ex}");
-            }
-        }
-
-        private void StartSteamClient(ulong hostSteamId)
-        {
-            if (!Steamworks.SteamClient.IsValid)
-            {
-                _statusMessage = "Cannot join on Steam: Steam client is not running or logged in!";
-                return;
-            }
-
-            try
-            {
-                StopDiscovery();
-                var transport = EnsureFacepunchTransport();
-                transport.targetSteamId = hostSteamId;
-
-                bool success = NetworkManager.Singleton.StartClient();
-                if (success)
-                {
-                    _isConnecting = true;
-                    _statusMessage = $"Connecting to Steam Host {hostSteamId} via Valve Relay...";
-                }
-                else
-                {
-                    _statusMessage = $"Failed to start client connection to Steam ID {hostSteamId}!";
-                }
-            }
-            catch (System.Exception ex)
-            {
-                _statusMessage = $"Steam Client Exception: {ex.Message}";
-                Debug.LogError($"[NetworkHudUI] Steam Client Error: {ex}");
-            }
-        }
-
-        private Netcode.Transports.Facepunch.FacepunchTransport EnsureFacepunchTransport()
-        {
-            var nm = NetworkManager.Singleton;
-            var fp = nm.GetComponent<Netcode.Transports.Facepunch.FacepunchTransport>();
-            if (fp == null)
-            {
-                fp = nm.gameObject.AddComponent<Netcode.Transports.Facepunch.FacepunchTransport>();
-            }
-
-            // Assign as active transport on NetworkManager
-            nm.NetworkConfig.NetworkTransport = fp;
-            return fp;
         }
     }
 }

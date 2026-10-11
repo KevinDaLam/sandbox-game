@@ -106,7 +106,7 @@ namespace Starter
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 360, 440));
+            GUILayout.BeginArea(new Rect(10, 10, 360, 480));
 
             if (NetworkManager.Singleton == null)
             {
@@ -127,29 +127,36 @@ namespace Starter
                     ConfigureTransportAddress("127.0.0.1", _port, "0.0.0.0");
                     bool success = NetworkManager.Singleton.StartHost();
                     _statusMessage = success 
-                        ? $"Host started on LAN ({localIp})!\nShare Room Code: <b><color=yellow>{_hostRoomCode}</color></b>" 
+                        ? $"Host started!\nYour IP: <b><color=cyan>{localIp}</color></b>\nRoom Code: <b><color=yellow>{_hostRoomCode}</color></b>" 
                         : "Failed to start Host!";
                 }
 
                 GUILayout.Space(8);
-                GUILayout.Label("<b>Join with 6-Digit Room Code:</b>");
-                _joinCodeInput = GUILayout.TextField(_joinCodeInput, 6).ToUpper().Trim();
+                GUILayout.Label("<b>Join by Room Code OR Direct IP:</b>");
+                _joinCodeInput = GUILayout.TextField(_joinCodeInput).Trim();
 
                 GUI.enabled = !_isConnecting;
                 if (GUILayout.Button(_isConnecting ? "Connecting..." : "Join Game (Player 2)", GUILayout.Height(36)))
                 {
-                    if (string.IsNullOrEmpty(_joinCodeInput))
+                    string input = _joinCodeInput;
+                    if (string.IsNullOrEmpty(input))
                     {
                         // Fallback to local loopback if blank
                         ConnectToIp("127.0.0.1");
                     }
-                    else if (TryRoomCodeToIp(_joinCodeInput, out string decodedIp))
+                    else if (System.Net.IPAddress.TryParse(input, out _))
                     {
+                        // Direct IP entered (e.g. 192.168.1.175)
+                        ConnectToIp(input);
+                    }
+                    else if (TryRoomCodeToIp(input, out string decodedIp))
+                    {
+                        // Room Code entered
                         ConnectToIp(decodedIp);
                     }
                     else
                     {
-                        _statusMessage = $"Invalid Room Code '{_joinCodeInput}'! Must be 6 alphanumeric letters/digits.";
+                        _statusMessage = $"Invalid input '{input}'! Enter a valid IPv4 address (e.g. 192.168.1.175) or a Room Code.";
                     }
                 }
                 GUI.enabled = true;
@@ -184,6 +191,7 @@ namespace Starter
                 GUILayout.Label($"<b>Running as: {mode}</b>");
                 if (NetworkManager.Singleton.IsHost && !string.IsNullOrEmpty(_hostRoomCode))
                 {
+                    GUILayout.Label($"<b>Your IP: <color=cyan>{GetLocalIPv4()}</color></b>");
                     GUILayout.Label($"<b>Room Code: <color=yellow>{_hostRoomCode}</color></b>");
                 }
                 GUILayout.Label($"Connected Players: {NetworkManager.Singleton.ConnectedClients.Count}");
@@ -194,6 +202,7 @@ namespace Starter
                     _hostRoomCode = "";
                     NetworkManager.Singleton.Shutdown();
                     _statusMessage = "Disconnected by user.";
+                    StartListeningForHosts();
                 }
             }
 
@@ -242,8 +251,21 @@ namespace Starter
                     udp.EnableBroadcast = true;
                     string message = $"{DiscoveryHeader}:{_hostRoomCode}:{_port}";
                     byte[] data = System.Text.Encoding.UTF8.GetBytes(message);
-                    var endpoint = new System.Net.IPEndPoint(System.Net.IPAddress.Broadcast, DiscoveryPort);
-                    udp.Send(data, data.Length, endpoint);
+
+                    // Broadcast to standard broadcast address
+                    udp.Send(data, data.Length, new System.Net.IPEndPoint(System.Net.IPAddress.Broadcast, DiscoveryPort));
+
+                    // Also broadcast on local subnet directly (e.g. 192.168.1.255)
+                    string localIp = GetLocalIPv4();
+                    int lastDot = localIp.LastIndexOf('.');
+                    if (lastDot > 0)
+                    {
+                        string subnetBroadcast = localIp.Substring(0, lastDot) + ".255";
+                        if (System.Net.IPAddress.TryParse(subnetBroadcast, out var subnetAddr))
+                        {
+                            udp.Send(data, data.Length, new System.Net.IPEndPoint(subnetAddr, DiscoveryPort));
+                        }
+                    }
                 }
             }
             catch { }
@@ -328,23 +350,13 @@ namespace Starter
             return "127.0.0.1";
         }
 
-        // --- 6-Digit Room Code Base36 Converter ---
-        private const string Alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 32 unambiguous chars (no I, O)
-
+        // --- Room Code Hex Converter (Lossless 8-hex format) ---
         private static string IpToRoomCode(string ipAddress)
         {
             if (System.Net.IPAddress.TryParse(ipAddress, out var ip))
             {
                 byte[] bytes = ip.GetAddressBytes();
-                // 32-bit uint
-                uint val = ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
-                char[] chars = new char[6];
-                for (int i = 5; i >= 0; i--)
-                {
-                    chars[i] = Alphabet[(int)(val % (uint)Alphabet.Length)];
-                    val /= (uint)Alphabet.Length;
-                }
-                return new string(chars);
+                return $"{bytes[0]:X2}{bytes[1]:X2}{bytes[2]:X2}{bytes[3]:X2}";
             }
             return "LOCAL1";
         }
@@ -352,29 +364,30 @@ namespace Starter
         private static bool TryRoomCodeToIp(string code, out string ipAddress)
         {
             ipAddress = null;
-            if (string.IsNullOrEmpty(code) || code.Length != 6) return false;
+            if (string.IsNullOrEmpty(code)) return false;
 
-            if (code == "LOCAL1")
+            code = code.Trim().ToUpper();
+            if (code == "LOCAL1" || code == "LOCAL")
             {
                 ipAddress = "127.0.0.1";
                 return true;
             }
 
-            uint val = 0;
-            for (int i = 0; i < 6; i++)
+            if (code.Length == 8)
             {
-                int index = Alphabet.IndexOf(char.ToUpper(code[i]));
-                if (index < 0) return false;
-                val = val * (uint)Alphabet.Length + (uint)index;
+                try
+                {
+                    byte b0 = System.Convert.ToByte(code.Substring(0, 2), 16);
+                    byte b1 = System.Convert.ToByte(code.Substring(2, 2), 16);
+                    byte b2 = System.Convert.ToByte(code.Substring(4, 2), 16);
+                    byte b3 = System.Convert.ToByte(code.Substring(6, 2), 16);
+                    ipAddress = $"{b0}.{b1}.{b2}.{b3}";
+                    return true;
+                }
+                catch { }
             }
 
-            byte b1 = (byte)((val >> 24) & 0xFF);
-            byte b2 = (byte)((val >> 16) & 0xFF);
-            byte b3 = (byte)((val >> 8) & 0xFF);
-            byte b4 = (byte)(val & 0xFF);
-
-            ipAddress = $"{b1}.{b2}.{b3}.{b4}";
-            return true;
+            return false;
         }
     }
 }

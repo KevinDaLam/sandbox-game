@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/_Game/Scenes/MainGame.unity
+    path: Assets/_Game/Scenes/MainMenu.unity
     guid: 92d6e92e1c72c054e9f7432fe33997e9
+  - enabled: 1
+    path: Assets/_Game/Scenes/PlatformerSandbox.unity
+    guid: d750a52e2b2b74c8baa863a214cd6905
   m_configObjects: {}

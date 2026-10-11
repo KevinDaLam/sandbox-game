@@ -80,6 +80,7 @@ namespace Starter
             NetworkClient.OnConnectedEvent += HandleClientConnected;
             NetworkClient.OnDisconnectedEvent += HandleClientDisconnected;
             NetworkClient.OnErrorEvent += HandleClientError;
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += HandleSceneLoaded;
         }
 
         private void OnDisable()
@@ -87,6 +88,24 @@ namespace Starter
             NetworkClient.OnConnectedEvent -= HandleClientConnected;
             NetworkClient.OnDisconnectedEvent -= HandleClientDisconnected;
             NetworkClient.OnErrorEvent -= HandleClientError;
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= HandleSceneLoaded;
+        }
+
+        private void HandleSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            if (scene.name == "PlatformerSandbox")
+            {
+                if (NetworkServer.active)
+                {
+                    foreach (var conn in NetworkServer.connections.Values)
+                    {
+                        if (conn.identity == null)
+                        {
+                            NetworkManager.singleton.OnServerAddPlayer(conn);
+                        }
+                    }
+                }
+            }
         }
 
         private void Start()

@@ -293,12 +293,15 @@ namespace Starter
                 new Color(0.08f, 0.10f, 0.14f, 0.94f));
 
             var lobbyVlg = _lobbyPanel.AddComponent<VerticalLayoutGroup>();
-            lobbyVlg.padding = new RectOffset(20, 20, 20, 20);
-            lobbyVlg.spacing = 10;
+            lobbyVlg.padding = new RectOffset(20, 20, 16, 16);
+            lobbyVlg.spacing = 8;
             lobbyVlg.childControlWidth = true;
-            lobbyVlg.childControlHeight = false;
+            lobbyVlg.childControlHeight = true;
             lobbyVlg.childForceExpandWidth = true;
             lobbyVlg.childForceExpandHeight = false;
+
+            var lobbyCsf = _lobbyPanel.AddComponent<ContentSizeFitter>();
+            lobbyCsf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             // Title
             CreateText(_lobbyPanel.transform, "SANDBOX MULTIPLAYER", 22, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white, 30);
@@ -391,8 +394,12 @@ namespace Starter
             badgeVlg.padding = new RectOffset(16, 16, 12, 12);
             badgeVlg.spacing = 6;
             badgeVlg.childControlWidth = true;
-            badgeVlg.childControlHeight = false;
+            badgeVlg.childControlHeight = true;
             badgeVlg.childForceExpandWidth = true;
+            badgeVlg.childForceExpandHeight = false;
+
+            var csf = badgePanel.AddComponent<ContentSizeFitter>();
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             _inGameRoleText = CreateText(badgePanel.transform, "🟢 ONLINE • HOST", 16, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.5f, 0.9f, 0.5f), 22);
             _inGameDetailsText = CreateText(badgePanel.transform, "Room Code: ----", 13, FontStyle.Normal, TextAnchor.MiddleLeft, Color.white, 20);
@@ -535,6 +542,7 @@ namespace Starter
             hlg.childForceExpandHeight = true;
 
             var le = go.GetComponent<LayoutElement>();
+            le.minHeight = height;
             le.preferredHeight = height;
             le.flexibleWidth = 1f;
             return go;
@@ -556,6 +564,7 @@ namespace Starter
             text.verticalOverflow = VerticalWrapMode.Overflow;
 
             var le = go.GetComponent<LayoutElement>();
+            le.minHeight = preferredHeight;
             le.preferredHeight = preferredHeight;
             le.flexibleWidth = 1f;
             return text;
@@ -578,6 +587,7 @@ namespace Starter
             if (onClick != null) btn.onClick.AddListener(onClick);
 
             var le = go.GetComponent<LayoutElement>();
+            le.minHeight = height;
             le.preferredHeight = height;
             le.flexibleWidth = 1f;
 
@@ -651,6 +661,8 @@ namespace Starter
             if (onValueChanged != null) inputField.onValueChanged.AddListener((v) => onValueChanged(v));
 
             var le = go.GetComponent<LayoutElement>();
+            le.minHeight = 36;
+            le.preferredHeight = 36;
             le.flexibleWidth = 1f;
 
             return inputField;
@@ -665,6 +677,7 @@ namespace Starter
             img.color = new Color(0.20f, 0.24f, 0.32f, 0.8f);
 
             var le = go.GetComponent<LayoutElement>();
+            le.minHeight = 2;
             le.preferredHeight = 2;
             le.flexibleWidth = 1f;
         }

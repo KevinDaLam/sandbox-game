@@ -25,6 +25,11 @@ namespace Game.Platformer
             if (_kickLeg != null) _legRest = _kickLeg.localRotation;
         }
 
+        public void PlayKickVisual()
+        {
+            _swingStart = Time.time;
+        }
+
         public bool TryKick(Vector3 facing)
         {
             if (Time.time < _nextKickTime) return false;

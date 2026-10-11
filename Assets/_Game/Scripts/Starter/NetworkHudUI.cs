@@ -48,10 +48,32 @@ namespace Starter
         private void OnDestroy()
         {
             StopDiscovery();
+            try
+            {
+                if (Steamworks.SteamClient.IsValid)
+                {
+                    Steamworks.SteamClient.Shutdown();
+                }
+            }
+            catch { }
         }
 
         private void Start()
         {
+            // Initialize Steam client early so GUI knows if Steam is running
+            try
+            {
+                if (!Steamworks.SteamClient.IsValid)
+                {
+                    Steamworks.SteamClient.Init(480, false);
+                    Debug.Log($"[NetworkHudUI] Steam initialized as {Steamworks.SteamClient.Name} (ID: {Steamworks.SteamClient.SteamId})");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[NetworkHudUI] Steam init check: {ex.Message}");
+            }
+
             if (NetworkManager.Singleton != null)
             {
                 NetworkManager.Singleton.OnClientConnectedCallback -= HandleClientConnected;
@@ -66,6 +88,16 @@ namespace Starter
 
         private void Update()
         {
+            // Process Steam callbacks
+            try
+            {
+                if (Steamworks.SteamClient.IsValid)
+                {
+                    Steamworks.SteamClient.RunCallbacks();
+                }
+            }
+            catch { }
+
             // If we are hosting, broadcast beacon every 1 second
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
             {

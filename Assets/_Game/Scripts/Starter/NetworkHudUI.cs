@@ -9,6 +9,7 @@ namespace Starter
     /// </summary>
     public class NetworkHudUI : MonoBehaviour
     {
+        [SerializeField] private string _steamIdInput = "";
         [SerializeField] private string _joinCodeInput = "";
         [SerializeField] private string _ipAddress = "127.0.0.1";
         [SerializeField] private ushort _port = 7777;
@@ -106,7 +107,7 @@ namespace Starter
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 360, 480));
+            GUILayout.BeginArea(new Rect(10, 10, 360, 560));
 
             if (NetworkManager.Singleton == null)
             {
@@ -117,9 +118,42 @@ namespace Starter
 
             if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
             {
-                GUILayout.Label("<b>--- 2 PLAYERS PROTOTYPE ---</b>");
+                GUILayout.Label("<b>--- STEAM P2P (SPACEWAR 480) ---</b>");
+                bool steamReady = Steamworks.SteamClient.IsValid;
+                if (!steamReady)
+                {
+                    GUILayout.Label("<color=yellow>Steam client not detected or initializing...</color>");
+                }
+                else
+                {
+                    GUILayout.Label($"Steam User: <b><color=cyan>{Steamworks.SteamClient.Name}</color></b>");
+                }
 
-                if (GUILayout.Button("Start Host (Player 1)", GUILayout.Height(38)))
+                if (GUILayout.Button("🎮 Host Steam Lobby", GUILayout.Height(38)))
+                {
+                    StartSteamHost();
+                }
+
+                GUILayout.Space(4);
+                GUILayout.Label("<b>Join by Steam ID / Friend ID:</b>");
+                _steamIdInput = GUILayout.TextField(_steamIdInput).Trim();
+
+                if (GUILayout.Button("🚀 Join Steam Host", GUILayout.Height(36)))
+                {
+                    if (ulong.TryParse(_steamIdInput, out ulong targetSteamId) && targetSteamId > 0)
+                    {
+                        StartSteamClient(targetSteamId);
+                    }
+                    else
+                    {
+                        _statusMessage = "Please enter a valid 17-digit Steam ID64!";
+                    }
+                }
+
+                GUILayout.Space(10);
+                GUILayout.Label("<b>--- LOCAL LAN / DIRECT IP ---</b>");
+
+                if (GUILayout.Button("Start Host (LAN)", GUILayout.Height(34)))
                 {
                     StopDiscovery();
                     string localIp = GetLocalIPv4();
@@ -127,16 +161,16 @@ namespace Starter
                     ConfigureTransportAddress("127.0.0.1", _port, "0.0.0.0");
                     bool success = NetworkManager.Singleton.StartHost();
                     _statusMessage = success 
-                        ? $"Host started!\nYour IP: <b><color=cyan>{localIp}</color></b>\nRoom Code: <b><color=yellow>{_hostRoomCode}</color></b>" 
+                        ? $"LAN Host started!\nYour IP: <b><color=cyan>{localIp}</color></b>\nRoom Code: <b><color=yellow>{_hostRoomCode}</color></b>" 
                         : "Failed to start Host!";
                 }
 
-                GUILayout.Space(8);
-                GUILayout.Label("<b>Join by Room Code OR Direct IP:</b>");
+                GUILayout.Space(6);
+                GUILayout.Label("<b>Join by LAN IP / Hex Code:</b>");
                 _joinCodeInput = GUILayout.TextField(_joinCodeInput).Trim();
 
                 GUI.enabled = !_isConnecting;
-                if (GUILayout.Button(_isConnecting ? "Connecting..." : "Join Game (Player 2)", GUILayout.Height(36)))
+                if (GUILayout.Button(_isConnecting ? "Connecting..." : "Join Game (LAN)", GUILayout.Height(34)))
                 {
                     string input = _joinCodeInput;
                     if (string.IsNullOrEmpty(input))
@@ -162,7 +196,7 @@ namespace Starter
                 GUI.enabled = true;
 
                 // --- LAN AUTO-DISCOVERY SCANNER ---
-                GUILayout.Space(8);
+                GUILayout.Space(6);
                 GUILayout.Label("<b>📡 LAN Auto-Discovery:</b>");
                 lock (_discoveredRooms)
                 {
@@ -392,6 +426,98 @@ namespace Starter
             }
 
             return false;
+        }
+
+        // --- STEAMWORKS P2P METHODS ---
+
+        private async void StartSteamHost()
+        {
+            if (!Steamworks.SteamClient.IsValid)
+            {
+                _statusMessage = "Cannot host on Steam: Steam client is not running or logged in!";
+                return;
+            }
+
+            try
+            {
+                StopDiscovery();
+                EnsureFacepunchTransport();
+
+                // Create a Steam lobby for up to 4 players
+                var lobby = await Steamworks.SteamMatchmaking.CreateLobbyAsync(4);
+                if (lobby.HasValue)
+                {
+                    lobby.Value.SetPublic();
+                    lobby.Value.SetJoinable(true);
+                    lobby.Value.SetData("name", $"{Steamworks.SteamClient.Name}'s Lobby");
+
+                    bool success = NetworkManager.Singleton.StartHost();
+                    if (success)
+                    {
+                        ulong mySteamId = Steamworks.SteamClient.SteamId.Value;
+                        _statusMessage = $"Steam Lobby Created!\nYour Steam ID64:\n<b><color=yellow>{mySteamId}</color></b>\n(Tell friend your Steam ID or invite via Shift+Tab!)";
+                    }
+                    else
+                    {
+                        _statusMessage = "Failed to start NetworkManager as Host!";
+                    }
+                }
+                else
+                {
+                    _statusMessage = "Failed to create Steam Lobby with Valve servers!";
+                }
+            }
+            catch (System.Exception ex)
+            {
+                _statusMessage = $"Steam Host Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] Steam Host Error: {ex}");
+            }
+        }
+
+        private void StartSteamClient(ulong hostSteamId)
+        {
+            if (!Steamworks.SteamClient.IsValid)
+            {
+                _statusMessage = "Cannot join on Steam: Steam client is not running or logged in!";
+                return;
+            }
+
+            try
+            {
+                StopDiscovery();
+                var transport = EnsureFacepunchTransport();
+                transport.targetSteamId = hostSteamId;
+
+                bool success = NetworkManager.Singleton.StartClient();
+                if (success)
+                {
+                    _isConnecting = true;
+                    _statusMessage = $"Connecting to Steam Host {hostSteamId} via Valve Relay...";
+                }
+                else
+                {
+                    _statusMessage = $"Failed to start client connection to Steam ID {hostSteamId}!";
+                }
+            }
+            catch (System.Exception ex)
+            {
+                _statusMessage = $"Steam Client Exception: {ex.Message}";
+                Debug.LogError($"[NetworkHudUI] Steam Client Error: {ex}");
+            }
+        }
+
+        private Netcode.Transports.Facepunch.FacepunchTransport EnsureFacepunchTransport()
+        {
+            var nm = NetworkManager.Singleton;
+            var fp = nm.GetComponent<Netcode.Transports.Facepunch.FacepunchTransport>();
+            if (fp == null)
+            {
+                fp = nm.gameObject.AddComponent<Netcode.Transports.Facepunch.FacepunchTransport>();
+            }
+
+            // Assign as active transport on NetworkManager
+            nm.NetworkConfig.NetworkTransport = fp;
+            return fp;
         }
     }
 }

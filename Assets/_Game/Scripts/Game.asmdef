@@ -4,6 +4,7 @@
     "references": [
         "Unity.Netcode.Runtime",
         "Unity.Networking.Transport",
+        "Facepunch Transport for Netcode for GameObjects",
         "Unity.InputSystem",
         "Unity.TextMeshPro",
         "Unity.RenderPipelines.Universal.Runtime",

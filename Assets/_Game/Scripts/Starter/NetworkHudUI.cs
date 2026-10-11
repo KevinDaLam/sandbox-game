@@ -9,9 +9,12 @@ namespace Starter
     /// </summary>
     public class NetworkHudUI : MonoBehaviour
     {
+        [SerializeField] private string _ipAddress = "127.0.0.1";
+        [SerializeField] private ushort _port = 7777;
+
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 320, 260));
+            GUILayout.BeginArea(new Rect(10, 10, 320, 280));
 
             if (NetworkManager.Singleton == null)
             {
@@ -23,13 +26,20 @@ namespace Starter
             if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
             {
                 GUILayout.Label("<b>--- 2 PLAYERS PROTOTYPE ---</b>");
-                if (GUILayout.Button("Start Host (Player 1)", GUILayout.Height(45)))
+
+                if (GUILayout.Button("Start Host (Player 1)", GUILayout.Height(40)))
                 {
+                    ConfigureTransportAddress("127.0.0.1", _port);
                     NetworkManager.Singleton.StartHost();
                 }
 
-                if (GUILayout.Button("Start Client (Player 2)", GUILayout.Height(45)))
+                GUILayout.Space(5);
+                GUILayout.Label("<b>Join Host by IP:</b>");
+                _ipAddress = GUILayout.TextField(_ipAddress);
+
+                if (GUILayout.Button("Start Client (Player 2)", GUILayout.Height(40)))
                 {
+                    ConfigureTransportAddress(_ipAddress.Trim(), _port);
                     NetworkManager.Singleton.StartClient();
                 }
             }
@@ -46,6 +56,15 @@ namespace Starter
             }
 
             GUILayout.EndArea();
+        }
+
+        private void ConfigureTransportAddress(string ip, ushort port)
+        {
+            var transport = NetworkManager.Singleton.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
+            if (transport != null)
+            {
+                transport.SetConnectionData(ip, port);
+            }
         }
     }
 }

@@ -61,14 +61,55 @@ git lfs pull
 ---
 
 ## 👥 Testing 2 Players on One Machine
-
+ 
 You don't need two separate computers to test multiplayer:
-
+ 
 1. **Host (Player 1)**: In the Unity Editor, click the **Play (▶)** button and select **Start Host (Player 1)**.
 2. **Client (Player 2)**:
    - Go to **File > Build Settings > Build and Run** (or run an existing build).
-   - In the standalone game window, click **Start Client (Player 2)**.
+   - In the standalone game window, leave the IP as `127.0.0.1` and click **Start Client (Player 2)**.
 3. Both players will appear in the room simultaneously and can walk around, pass the box, and interact in real time!
+
+---
+
+## 🌐 Testing with Two Computers (LAN / Local Network)
+
+To test the prototype between two physical computers connected to the same Wi-Fi or router network:
+
+### Step 1: Find the Host PC's Local IP Address
+On the computer that will run as the **Host**:
+1. Open PowerShell or Command Prompt.
+2. Run:
+   ```shell
+   ipconfig
+   ```
+3. Locate your active network adapter (e.g., `Wireless LAN adapter Wi-Fi` or `Ethernet adapter Ethernet`).
+4. Note your **IPv4 Address** (typically looks like `192.168.1.X` or `10.0.0.X`).
+
+### Step 2: Configure Windows Defender Firewall (Host PC)
+By default, Windows Firewall can block incoming UDP connections on port `7777`.
+- **Option A (Quick)**: When starting the game or Unity for the first time, Windows will prompt *"Allow Unity / SandboxGame through Windows Defender Firewall"*. Check **both** Private and Public networks, then click **Allow access**.
+- **Option B (Manual Inbound Rule)**:
+  1. Open **Windows Defender Firewall with Advanced Security**.
+  2. Click **Inbound Rules > New Rule...**.
+  3. Select **Port** > Next.
+  4. Select **UDP**, specify port **7777** > Next.
+  5. Select **Allow the connection** > Next > Finish.
+
+### Step 3: Run the Game on Both Computers
+1. **On Computer 1 (Host)**:
+   - Launch the game (either inside the Unity Editor or via a standalone build).
+   - Click **Start Host (Player 1)**.
+2. **On Computer 2 (Client)**:
+   - Launch the game (via a standalone build or Unity Editor).
+   - In the on-screen HUD text box under **Join Host by IP:**, enter Computer 1's IPv4 address (e.g. `192.168.1.42`).
+   - Click **Start Client (Player 2)**.
+
+Both computers will connect immediately, synchronizing player movement and physics box manipulation across your local network!
+
+> [!TIP]
+> **Want to test over the internet before Steamworks is integrated?**
+> Use a zero-config peer mesh tool like [Tailscale](https://tailscale.com) or [ZeroTier](https://www.zerotier.com). Install it on both PCs, join the same private network, and use the Host's 100.x.x.x Tailscale IP address in the Client HUD. No router port forwarding required!
 
 ---
 

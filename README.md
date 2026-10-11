@@ -67,49 +67,42 @@ You don't need two separate computers to test multiplayer:
 1. **Host (Player 1)**: In the Unity Editor, click the **Play (▶)** button and select **Start Host (Player 1)**.
 2. **Client (Player 2)**:
    - Go to **File > Build Settings > Build and Run** (or run an existing build).
-   - In the standalone game window, leave the IP as `127.0.0.1` and click **Start Client (Player 2)**.
+   - In the standalone game window, leave the join code blank and click **Join Game (Player 2)** (defaults to loopback `127.0.0.1`).
 3. Both players will appear in the room simultaneously and can walk around, pass the box, and interact in real time!
 
 ---
 
 ## 🌐 Testing with Two Computers (LAN / Local Network)
 
-To test the prototype between two physical computers connected to the same Wi-Fi or router network:
+Connecting two computers on the same Wi-Fi or Ethernet network is now automated:
 
-### Step 1: Find the Host PC's Local IP Address
-On the computer that will run as the **Host**:
-1. Open PowerShell or Command Prompt.
-2. Run:
-   ```shell
-   ipconfig
-   ```
-3. Locate your active network adapter (e.g., `Wireless LAN adapter Wi-Fi` or `Ethernet adapter Ethernet`).
-4. Note your **IPv4 Address** (typically looks like `192.168.1.X` or `10.0.0.X`).
+### Method 1: Zero-Click LAN Auto-Discovery 📡 *(Recommended)*
+1. **On Computer 1 (Host)**: Click **Start Host (Player 1)**.
+   - The host immediately begins broadcasting a UDP discovery beacon across your subnet (`255.255.255.255:47777`).
+2. **On Computer 2 (Client)**: Launch the game.
+   - The client scans your local network automatically in the background.
+   - Under **📡 LAN Auto-Discovery**, a join button appears automatically:
+     ```
+     👉 Join [3W9K4V] (192.168.1.175)
+     ```
+   - Click it to connect instantly with zero typing!
 
-### Step 2: Configure Windows Defender Firewall (Host PC)
-By default, Windows Firewall can block incoming UDP connections on port `7777`.
-- **Option A (Quick)**: When starting the game or Unity for the first time, Windows will prompt *"Allow Unity / SandboxGame through Windows Defender Firewall"*. Check **both** Private and Public networks, then click **Allow access**.
-- **Option B (Manual Inbound Rule)**:
-  1. Open **Windows Defender Firewall with Advanced Security**.
-  2. Click **Inbound Rules > New Rule...**.
-  3. Select **Port** > Next.
-  4. Select **UDP**, specify port **7777** > Next.
-  5. Select **Allow the connection** > Next > Finish.
+### Method 2: 6-Digit Room Code 🔑
+1. When Player 1 starts the host, a prominent yellow 6-digit room code is displayed on-screen (e.g., **`3W9K4V`**).
+2. Player 2 enters that 6-digit code into the **Join with 6-Digit Room Code** text box and clicks **Join Game (Player 2)**.
+3. The game mathematically decodes the code into the host's LAN IP address and establishes the connection.
 
-### Step 3: Run the Game on Both Computers
-1. **On Computer 1 (Host)**:
-   - Launch the game (either inside the Unity Editor or via a standalone build).
-   - Click **Start Host (Player 1)**.
-2. **On Computer 2 (Client)**:
-   - Launch the game (via a standalone build or Unity Editor).
-   - In the on-screen HUD text box under **Join Host by IP:**, enter Computer 1's IPv4 address (e.g. `192.168.1.42`).
-   - Click **Start Client (Player 2)**.
-
-Both computers will connect immediately, synchronizing player movement and physics box manipulation across your local network!
+### Troubleshooting: Windows Defender Firewall
+If the client shows *"Scanning Wi-Fi for games..."* or fails to connect:
+- Ensure the Host PC allowed Unity / SandboxGame through **Windows Defender Firewall** for both **Private and Public** networks.
+- Inbound UDP ports used: **`7777`** (Game traffic) and **`47777`** (LAN Discovery beacon).
 
 > [!TIP]
-> **Want to test over the internet before Steamworks is integrated?**
-> Use a zero-config peer mesh tool like [Tailscale](https://tailscale.com) or [ZeroTier](https://www.zerotier.com). Install it on both PCs, join the same private network, and use the Host's 100.x.x.x Tailscale IP address in the Client HUD. No router port forwarding required!
+> **Playing over the internet (different houses)?**
+> To test over the internet without setting up router port forwarding:
+> 1. Both players install [Tailscale](https://tailscale.com) or [ZeroTier](https://www.zerotier.com).
+> 2. Join the same private mesh network.
+> 3. Host starts game on the Tailscale IP, and the client enters the host's 6-digit code or connects directly!
 
 ---
 

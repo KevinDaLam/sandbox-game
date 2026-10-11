@@ -181,7 +181,44 @@ When `Drop()` is called, `ReleaseCarrierClientRpc` restores standard gravity (`u
 
 ---
 
-## 5. Summary Cheat Sheet for Developers
+## 5. LAN Auto-Discovery & 6-Digit Room Code Systems
+
+To solve the friction of players typing manual IP addresses during local playtesting, `NetworkHudUI.cs` implements two network discovery layers:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Host (Player 1)
+    participant LAN as Local Subnet (UDP 47777)
+    participant Client as Client (Player 2)
+    
+    Host->>Host: Convert Host IPv4 to 6-Digit Room Code (Base32)
+    Host->>Host: StartHost() on 0.0.0.0:7777
+    loop Every 1 Second (Update)
+        Host->>LAN: UDP Broadcast: "SANDBOX_GAME_LAN_HOST:3W9K4V:7777"
+    end
+    Client->>LAN: Background Async Task listens on UDP 47777
+    LAN-->>Client: Receives Beacon packet from Host IP
+    Client->>Client: Adds "👉 Join [3W9K4V] (Host IP)" button to GUI
+    Client->>Host: Clicks button -> Connects to Host IP:7777 directly!
+```
+
+### 1. UDP Broadcast Beacon (`DiscoveryPort = 47777`)
+* When running as Host, a background loop sends a broadcast datagram to `255.255.255.255:47777` every second.
+* Any running client on the same Wi-Fi subnet has a non-blocking asynchronous listener (`ReceiveAsync`) that parses incoming beacons and surfaces a 1-click **Join Button** in the HUD without any player configuration.
+
+### 2. The 6-Digit Base32 Room Code Math
+IPv4 addresses consist of 4 bytes (32 bits), e.g., `192.168.1.175`:
+1. **Packed to 32-bit uint**:
+   $$\text{val} = (192 \ll 24) \mid (168 \ll 16) \mid (1 \ll 8) \mid 175 = 3232235951$$
+2. **Encoded into 6 Base32 characters**:
+   Using a 32-character unambiguous alphabet (`0123456789ABCDEFGHJKLMNPQRSTUVWXYZ`, excluding lookalike letters `I` and `O`), the 32-bit integer is converted into a 6-character room code (since $32^6 = 1,073,741,824 \times \text{range}$, comfortably packing standard network ranges).
+3. **Decoded back into IPv4**:
+   When entered on any machine, the inverse function extracts the exact 4 bytes and configures `UnityTransport` with the host's target IP address.
+
+---
+
+## 6. Summary Cheat Sheet for Developers
 
 Component / Script | Where It Lives | Primary Purpose
 :--- | :--- | :---

@@ -104,6 +104,8 @@ If the client shows *"Scanning Wi-Fi for games..."* or fails to connect:
 > 2. Join the same private mesh network.
 > 3. Host starts game on the Tailscale IP, and the client enters the host's 6-digit code or connects directly!
 
+## 🌐 Testing with Steam (TODO)
+
 ---
 
 ## 📂 Project Structure
